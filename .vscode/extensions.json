@@ -1,0 +1,15 @@
+{
+  "recommendations": [
+    "redhat.vscode-yaml",
+    "ms-python.python",
+    "charliermarsh.ruff",
+    "streetsidesoftware.code-spell-checker",
+    "tamasfe.even-better-toml",
+    "timonwong.shellcheck",
+    "mikestead.dotenv",
+    "editorconfig.editorconfig",
+    "vivaxy.vscode-conventional-commits",
+    "yzhang.markdown-all-in-one",
+    "DavidAnson.vscode-markdownlint"
+  ]
+}

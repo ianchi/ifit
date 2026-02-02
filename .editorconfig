@@ -1,0 +1,25 @@
+# top-most EditorConfig file for this level
+root = true
+
+# Applies to all files
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+trim_trailing_whitespace = true
+insert_final_newline = true
+charset = utf-8
+
+[*.{py,ipynb}]
+indent_style = space
+indent_size = 4
+
+[*.md]
+# two whitespaces are a newline
+trim_trailing_whitespace = false
+
+[*.bat]
+end_of_line = crlf
+
+[*.tsv]
+indent_style = tab

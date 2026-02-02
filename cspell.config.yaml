@@ -1,0 +1,74 @@
+$schema: https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json
+import:
+  - "@cspell/dict-shell/cspell-ext.json"
+  - "@cspell/dict-python/cspell-ext.json"
+  - "@cspell/dict-software-terms/cspell-ext.json"
+  - "@cspell/dict-fullstack/cspell-ext.json"
+useGitignore: true
+language: en
+ignorePaths:
+  - "*.ipynb"
+  - cspell.config.yaml
+  - .pre-commit-config.yaml
+  - CHANGELOG.md
+  - .vscode/*
+  - .devcontainer/*
+  - .gitignore
+  - .github/*
+enabledFileTypes:
+  "*": true
+words:
+  - abstractmethod
+  - asyncio
+  - bitfield
+  - bitfields
+  - bytearray
+  - commitizen
+  - conftest
+  - coro
+  - dataclass
+  - datetimez
+  - direnv
+  - Docstrings
+  - ellipticals
+  - flynt
+  - ftms
+  - ifit
+  - ipynb
+  - isort
+  - kwargs
+  - mypy
+  - nordictrack
+  - Numpy
+  - Panella
+  - Perflint
+  - PFTL
+  - proform
+  - proshox
+  - pycache
+  - pycodestyle
+  - pydantic
+  - pydocstyle
+  - Pyflakes
+  - pygrep
+  - pylint
+  - pypackages
+  - pyproject
+  - pytest
+  - pytype
+  - pyupgrade
+  - qdomyos
+  - repr
+  - setcap
+  - tseries
+  - venv
+  - virtualenvs
+  - zwifit
+  - zwift
+overrides:
+  - filename: "**/pyproject.toml"
+    words:
+      - addopts
+      - minversion
+      - showlocals
+      - testpaths

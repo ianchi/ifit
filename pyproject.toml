@@ -1,0 +1,322 @@
+[build-system]
+requires = ["poetry-core>=2.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[project]
+name = "ifit"
+version = "0.1.0b1"
+description = "BLE client and FTMS relay for iFit equipment"
+authors = [{ name = "Adrian Panella", email = "ianchi74@outlook.com" }]
+maintainers = [{ name = "Adrian Panella", email = "ianchi74@outlook.com" }]
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11,<3.12"
+keywords = ["bluetooth", "ble", "ifit", "ftms", "fitness"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Hardware :: Universal Serial Bus (USB) :: Wireless Controller",
+]
+
+[project.scripts]
+ifit = "ifit.cli:main"
+
+[tool.poetry]
+homepage = "https://github.com/ianchi/ifit"
+repository = "https://github.com/ianchi/ifit.git"
+documentation = "https://github.com/ianchi/ifit"
+
+[tool.poetry.dependencies]
+python = ">=3.11,<3.12"
+bleak = "^2.1.1"
+pydantic = "^2.0.0"
+bless = { version = "^0.3.0", optional = true, markers = "sys_platform == 'linux'" }
+
+[tool.poetry.extras]
+server = ["bless"]
+all = ["bless"]
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.14.14"
+pyright = "^1.1.408"
+commitizen = "^4.13.0"
+pre-commit = "^4.5.1"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.0.0"
+pytest-asyncio = "^0.21.0"
+coverage = { extras = ["toml"], version = "^7.6.9" }
+pytest-cov = "^6.0.0"
+
+[tool.commitizen]
+version_files = ["ifit/__init__.py"]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+update_changelog_on_bump = true
+
+[tool.ruff]
+target-version = "py311"
+src = ["ifit"]
+line-length = 100
+
+exclude = [
+  ".bzr",
+  ".direnv",
+  ".eggs",
+  ".git",
+  ".git-rewrite",
+  ".hg",
+  ".mypy_cache",
+  ".nox",
+  ".pants.d",
+  ".pytype",
+  ".ruff_cache",
+  ".svn",
+  ".tox",
+  ".venv",
+  "__pypackages__",
+  "_build",
+  "buck-out",
+  "build",
+  "dist",
+  "node_modules",
+  "venv",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.ruff.lint]
+ignore = [
+  "ANN003", # missing-type-kwargs
+  "D105",   # Missing docstring in magic method
+  "D107",   # Missing docstring in `__init__`
+  "TD002",  # Missing author in TODO
+  "TD003",  # Missing issue link in TODO
+  "COM812", # Missing trailing comma
+  "TID252", # Prefer absolute imports over relative imports from parent modules
+  "FIX002", # Line contains TODO
+  "ERA001", # Found commented-out code
+  "ISC001",
+]
+
+select = [
+  "F",     # Pyflakes
+  "E",     # pycodestyle - Error
+  "W",     # pycodestyle - Warning
+  "I",     # isort
+  "N",     # pep8-naming
+  "D",     # pydocstyle
+  "UP",    # pyupgrade
+  "YTT",   # flake8-2020
+  "ANN",   # flake8-annotations
+  "ASYNC", # flake8-async
+  "S",     # flake8-bandit
+  "BLE",   # flake8-blind-except
+  "FBT",   # flake8-boolean-trap
+  "B",     # flake8-bugbear
+  "A",     # flake8-builtins
+  "COM",   # flake8-commas
+  "C4",    # flake8-comprehensions
+  "DTZ",   # flake8-datetimez
+  "T10",   # flake8-debugger
+  "EXE",   # flake8-executable
+  "FA",    # flake8-future-annotations
+  "ISC",   # flake8-implicit-str-concat
+  "ICN",   # flake8-import-conventions
+  "LOG",   # flake8-logging
+  "G",     # flake8-logging-format
+  "INP",   # flake8-no-pep420
+  "PIE",   # flake8-pie
+  "T20",   # flake8-print
+  "PYI",   # flake8-pyi
+  "Q",     # flake8-quotes
+  "RET",   # flake8-return
+  "SLF",   # flake8-self
+  "SLOT",  # flake8-slots
+  "SIM",   # flake8-simplify
+  "TID",   # flake8-tidy-imports
+  "INT",   # flake8-gettext
+  "ARG",   # flake8-unused-arguments
+  "TD",    # flake8-todos
+  "FIX",   # flake8-fixme
+  "ERA",   # eradicate
+  "PD",    # pandas-vet
+  "PGH",   # pygrep-hooks
+  "PL",    # pylint
+  "FLY",   # flynt
+  "NPY",   # Numpy
+  "PERF",  # Perflint
+  "RUF",   # Ruff
+]
+
+fixable = ["ALL"]
+unfixable = []
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+[tool.ruff.lint.flake8-type-checking]
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**/test_*.py" = [
+  "S101",    # asserts allowed in tests...
+  "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant...
+  "FBT",     # Don't care about booleans as positional arguments in tests
+  "PLR2004", # Magic value used in comparison
+  "S311",    # Standard pseudo-random generators are not suitable for cryptographic purposes
+  "E712",
+  "INP001",  # allow implicit namespace for folder grouping
+  "ANN201",  # allow missing type in test
+  "ANN001",  # allow missing type annotations in test arguments
+]
+"**/tests/conftest.py" = [
+  "ANN201", # allow missing type in test fixtures
+]
+"**/scripts/**/*.py" = [
+  "T201",     # allow print for scripts
+  "INP001",   # allow implicit modules
+  "ANN",      # allow missing annotations in scripts
+  "D",        # allow missing docstrings in scripts
+  "BLE001",   # allow catching Exception in scripts
+  "PLR2004",  # allow magic values in scripts
+  "PLW0603",  # allow global variables in scripts
+  "PLW0602",  # allow global reads in scripts
+  "ARG001",   # allow unused args in scripts
+  "ASYNC230", # allow blocking file ops in scripts
+]
+"ifit/interceptor/_discovery.py" = [
+  "T201",     # allow print for interactive discovery tool
+  "ASYNC109", # timeout parameter is acceptable here
+  "ASYNC110", # sleep in loop is intentional for waiting
+  "BLE001",   # allow catching Exception (defensive handling)
+]
+"ifit/cli/*.py" = [
+  "T201",     # allow print for CLI modules
+  "G004",     # allow f-strings in logging for CLI
+  "G201",     # allow error with exc_info for CLI
+  "BLE001",   # allow catching Exception in CLI
+  "ASYNC230", # allow blocking file operations in CLI
+  "W293",     # allow blank lines with whitespace in docstrings
+]
+"ifit/client/_client.py" = [
+  "G004",    # allow f-strings in logging for client (lots of dynamic messages)
+  "BLE001",  # allow catching Exception in client (defensive handling)
+  "PLR2004", # allow magic values in CSV parsing
+  "SIM105",  # suppress is more complex than try-except-pass for cleanup
+  "RET504",  # intermediate variable improves readability in async wait
+]
+"ifit/client/protocol.py" = [
+  "D100",   # missing module docstring (protocol definitions file)
+  "FBT001", # boolean argument is fine for internal converter function
+]
+"ifit/_scanner.py" = [
+  "PLR2004",  # allow magic values for BLE code validation
+  "ASYNC109", # timeout parameter is acceptable for scanner functions
+]
+"ifit/_simulated_server.py" = [
+  "G004",     # allow f-strings in logging for test server
+  "PLR2004",  # allow magic values in test server
+  "BLE001",   # allow catching Exception in test server
+  "ANN202",   # allow missing return types in test server
+  "ANN204",   # allow missing __init__ return type in test server
+  "ARG002",   # allow unused args in test server callbacks
+  "RET504",   # allow intermediate variable in test server
+  "RUF006",   # allow fire-and-forget tasks in test server
+  "ASYNC110", # allow sleep in loop for test server
+  "D205",     # allow docstring format in test server
+]
+"ifit/__init__.py" = [
+  "F401",   # exported imports are intentional
+  "PYI056", # .extend() and .append() are fine for dynamic __all__
+]
+"ifit/__main__.py" = [
+  "D415", # simple module docstring
+]
+"ifit/cli/_device.py" = [
+  "S110",     # silent disconnect on cleanup is intentional
+  "SIM105",   # try-except-pass is clearer for disconnect
+  "ASYNC110", # sleep in loop is intentional for keep-alive
+]
+"**/*.ipynb" = [
+  "PD901",   # Avoid using the generic variable name `df` for DataFrames
+  "PLE1142", # `await` should be used within an async function
+  "T201",    # allow print
+  "I",       # isort
+  "E501",    # line too long
+  "A004",    # Shadowing built-in name
+  "PLC0206", # Extracting value from dictionary without calling `.items()`
+  "PLR2004", # Magic value used in comparison
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["ifit"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.pylint]
+max-args = 15
+
+[tool.ruff.lint.flake8-unused-arguments]
+ignore-variadic-names = true
+
+[tool.pyright]
+exclude = ["**/node_modules", "**/__pycache__", ".venv/", "build/", "dist/"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+pythonVersion = "3.11"
+pythonPlatform = "Linux"
+reportMissingImports = "error"
+reportUnusedImport = "warning"
+reportUnusedVariable = "warning"
+reportDuplicateImport = "warning"
+strictListInference = true
+strictDictionaryInference = true
+
+[tool.coverage.run]
+source = ["ifit"]
+branch = true
+data_file = ".coverage/data"
+omit = ["*/tests/*", "*/scripts/*", "*/__init__.py", "*/.venv/*"]
+
+[tool.coverage.report]
+fail_under = 70
+skip_covered = true
+show_missing = true
+format = "text"
+exclude_lines = [
+  "pragma: no cover",
+  "def __repr__",
+  "raise AssertionError",
+  "raise NotImplementedError",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+  "@abstractmethod",
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = ["-ra", "--strict-markers", "--strict-config", "--showlocals"]
+markers = [
+  "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+  "integration: marks tests as integration tests",
+  "unit: marks tests as unit tests",
+]
