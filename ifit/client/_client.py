@@ -328,9 +328,13 @@ class IFitBleClient:
         read_defs = []
         for item in reads:
             if isinstance(item, int):
-                if item not in CHARACTERISTICS_BY_ID:
+                # First check known characteristics, then equipment-specific ones
+                if item in CHARACTERISTICS_BY_ID:
+                    read_defs.append(CHARACTERISTICS_BY_ID[item])
+                elif item in info.characteristics:
+                    read_defs.append(info.characteristics[item])
+                else:
                     raise ValueError(f"Unknown characteristic id: {item}")
-                read_defs.append(CHARACTERISTICS_BY_ID[item])
             else:
                 if item not in CHARACTERISTICS:
                     raise ValueError(f"Unknown characteristic name: {item}")

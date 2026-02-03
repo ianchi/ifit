@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 RESPONSE_OK_CODE = 2
 MAX_BYTES_PER_MESSAGE = 18
@@ -174,6 +177,19 @@ def _pulse_to_buffer(buffer: bytearray, pos: int, value: Mapping[str, Any]) -> i
     return pos + 4
 
 
+def _make_hex_string_converter(size: int) -> Converter:
+    """Factory for hex string converters for raw byte data."""
+
+    def from_buffer(buffer: bytes, pos: int) -> str:
+        return buffer[pos : pos + size].hex()
+
+    def to_buffer(buf: bytearray, pos: int, value: str) -> int:
+        buf[pos : pos + size] = bytes.fromhex(value)
+        return pos + size
+
+    return Converter(size, from_buffer, to_buffer)
+
+
 CONVERTERS = {
     "double": _make_scaled_converter(100.0),
     "boolean": _make_bool_converter(),
@@ -183,6 +199,9 @@ CONVERTERS = {
     "one_byte_int": _make_int_converter(1),
     "two_bytes_int": _make_int_converter(2),
     "four_bytes_int": _make_int_converter(4),
+    "hex_3_bytes": _make_hex_string_converter(3),
+    "hex_14_bytes": _make_hex_string_converter(14),
+    "hex_45_bytes": _make_hex_string_converter(45),
 }
 
 
@@ -265,6 +284,139 @@ CHARACTERISTICS = {
     ),
     "X7": CharacteristicDefinition(
         "X7", 100, read_only=False, converter=CONVERTERS["one_byte_int"]
+    ),
+    # Discovered characteristics from treadmill - sizes inferred from device responses
+    "Unknown3": CharacteristicDefinition(
+        "Unknown3", 3, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown7": CharacteristicDefinition(
+        "Unknown7", 7, read_only=True, converter=CONVERTERS["hex_14_bytes"]
+    ),
+    "Unknown8": CharacteristicDefinition(
+        "Unknown8", 8, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown14": CharacteristicDefinition(
+        "Unknown14", 14, read_only=True, converter=CONVERTERS["hex_3_bytes"]
+    ),
+    "Unknown15": CharacteristicDefinition(
+        "Unknown15", 15, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown19": CharacteristicDefinition(
+        "Unknown19", 19, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown22": CharacteristicDefinition(
+        "Unknown22", 22, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown23": CharacteristicDefinition(
+        "Unknown23", 23, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown24": CharacteristicDefinition(
+        "Unknown24", 24, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown25": CharacteristicDefinition(
+        "Unknown25", 25, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown37": CharacteristicDefinition(
+        "Unknown37", 37, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown38": CharacteristicDefinition(
+        "Unknown38", 38, read_only=True, converter=CONVERTERS["hex_45_bytes"]
+    ),
+    "Unknown39": CharacteristicDefinition(
+        "Unknown39", 39, read_only=True, converter=CONVERTERS["hex_45_bytes"]
+    ),
+    "Unknown40": CharacteristicDefinition(
+        "Unknown40", 40, read_only=True, converter=CONVERTERS["hex_45_bytes"]
+    ),
+    "Unknown41": CharacteristicDefinition(
+        "Unknown41", 41, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown44": CharacteristicDefinition(
+        "Unknown44", 44, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown45": CharacteristicDefinition(
+        "Unknown45", 45, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown47": CharacteristicDefinition(
+        "Unknown47", 47, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown48": CharacteristicDefinition(
+        "Unknown48", 48, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown51": CharacteristicDefinition(
+        "Unknown51", 51, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown53": CharacteristicDefinition(
+        "Unknown53", 53, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown54": CharacteristicDefinition(
+        "Unknown54", 54, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown55": CharacteristicDefinition(
+        "Unknown55", 55, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown58": CharacteristicDefinition(
+        "Unknown58", 58, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown59": CharacteristicDefinition(
+        "Unknown59", 59, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown64": CharacteristicDefinition(
+        "Unknown64", 64, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown65": CharacteristicDefinition(
+        "Unknown65", 65, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown66": CharacteristicDefinition(
+        "Unknown66", 66, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown72": CharacteristicDefinition(
+        "Unknown72", 72, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown73": CharacteristicDefinition(
+        "Unknown73", 73, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown74": CharacteristicDefinition(
+        "Unknown74", 74, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown75": CharacteristicDefinition(
+        "Unknown75", 75, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown76": CharacteristicDefinition(
+        "Unknown76", 76, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown83": CharacteristicDefinition(
+        "Unknown83", 83, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown84": CharacteristicDefinition(
+        "Unknown84", 84, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown85": CharacteristicDefinition(
+        "Unknown85", 85, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "Unknown94": CharacteristicDefinition(
+        "Unknown94", 94, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown95": CharacteristicDefinition(
+        "Unknown95", 95, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown96": CharacteristicDefinition(
+        "Unknown96", 96, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown97": CharacteristicDefinition(
+        "Unknown97", 97, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown98": CharacteristicDefinition(
+        "Unknown98", 98, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown102": CharacteristicDefinition(
+        "Unknown102", 102, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "Unknown107": CharacteristicDefinition(
+        "Unknown107", 107, read_only=True, converter=CONVERTERS["one_byte_int"]
+    ),
+    "Unknown108": CharacteristicDefinition(
+        "Unknown108", 108, read_only=True, converter=CONVERTERS["one_byte_int"]
     ),
 }
 
@@ -530,10 +682,38 @@ def parse_write_and_read_response(
     response: bytes,
     reads: Iterable[CharacteristicDefinition],
 ) -> dict[str, Any]:
-    """Parse read values from a write-and-read response."""
+    """Parse read values from a write-and-read response.
+
+    For characteristics without converters (converter=None), if reading a single
+    characteristic, we can infer its size from the response and return raw bytes.
+    """
     result: dict[str, Any] = {}
     read_list = sorted(reads, key=lambda item: item.id)
 
+    # Check if we're reading a single characteristic with no converter
+    # In this case, we can infer the size from the response
+    if len(read_list) == 1 and read_list[0].converter is None:
+        characteristic = read_list[0]
+        if characteristic.id in equipment_information.characteristics:
+            # The response payload starts at byte 8 and extends to the checksum (last byte)
+            # All remaining bytes after position 8 (excluding the last checksum byte)
+            # belong to this single characteristic
+            payload_start = 8
+            payload_end = len(response) - 1  # Exclude checksum
+            if payload_end > payload_start:
+                data_length = payload_end - payload_start
+                raw_data = response[payload_start:payload_end]
+                LOGGER.info(
+                    "Discovered characteristic %s (ID=%d): length=%d bytes, data=%s",
+                    characteristic.name,
+                    characteristic.id,
+                    data_length,
+                    raw_data.hex(),
+                )
+                result[characteristic.name] = raw_data
+        return result
+
+    # Normal path: process characteristics with converters
     pos = 8
     for characteristic in read_list:
         if characteristic.id not in equipment_information.characteristics:
