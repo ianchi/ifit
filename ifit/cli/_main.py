@@ -60,6 +60,13 @@ Examples:
         """,
     )
 
+    # Global options
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging output to console",
+    )
+
     subparsers = parser.add_subparsers(dest="command", help="Command to execute", required=True)
 
     # Scan command - unified discovery
@@ -161,9 +168,14 @@ Examples:
 
 def main() -> None:
     """Entry point for the iFit CLI."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-
     args = _parse_args()
+
+    # Configure logging based on --debug flag
+    if args.debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s: %(message)s")
+    else:
+        # Only log to console at ERROR level and above when not in debug mode
+        logging.basicConfig(level=logging.ERROR, format="%(levelname)s %(name)s: %(message)s")
 
     try:
         asyncio.run(args.func(args))
