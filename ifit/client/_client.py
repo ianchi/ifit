@@ -352,6 +352,7 @@ class IFitBleClient:
         payload = b"".join(payload_parts)
 
         _, response = await self._send_command(Command.WRITE_AND_READ, payload)
+        LOGGER.debug("Read response: %d bytes, raw_hex=%s", len(response), response.hex())
         return parse_write_and_read_response(info, response, read_defs)
 
     async def read_characteristics(self, reads: Iterable[str | int]) -> dict[str, Any]:

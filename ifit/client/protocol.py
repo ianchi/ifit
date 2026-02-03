@@ -720,7 +720,16 @@ def parse_write_and_read_response(
             continue
         converter = characteristic.converter
         if converter:
-            result[characteristic.name] = converter.from_buffer(response, pos)
+            raw_hex = response[pos : pos + converter.size].hex()
+            value = converter.from_buffer(response, pos)
+            LOGGER.debug(
+                "Characteristic %s (ID=%d): raw_hex=%s, decoded_value=%s",
+                characteristic.name,
+                characteristic.id,
+                raw_hex,
+                value,
+            )
+            result[characteristic.name] = value
             pos += converter.size
     return result
 
