@@ -5,10 +5,19 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import sys
 
-from ..client import IFitBleClient
+from ..client import ActivationError, IFitBleClient
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _handle_activation_error(address: str) -> None:
+    """Handle activation code errors with user-friendly messages."""
+    print("\n✗ Incorrect activation code")
+    print("  The provided activation code is invalid for this device.")
+    print(f"\n  Use 'ifit activate {address}' to discover the correct code.")
+    sys.exit(1)
 
 
 async def monitor(args: argparse.Namespace) -> None:
@@ -45,5 +54,15 @@ async def monitor(args: argparse.Namespace) -> None:
 
     except KeyboardInterrupt:
         print("\n\nMonitoring stopped")
+    except ActivationError:
+        _handle_activation_error(args.address)
+    except ValueError as e:
+        print(f"\n✗ Error: {e}")
+        LOGGER.error("Monitor error", exc_info=True)
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        LOGGER.error("Monitor error", exc_info=True)
+        sys.exit(1)
     finally:
         await client.disconnect()

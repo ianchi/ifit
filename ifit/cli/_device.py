@@ -8,9 +8,40 @@ import logging
 import sys
 from typing import Any
 
-from ..client import IFitBleClient
+from ..client import ActivationError, IFitBleClient
+from ..client.protocol import EquipmentInformation
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _handle_activation_error(address: str) -> None:
+    """Handle activation code errors with user-friendly messages."""
+    print("\n✗ Incorrect activation code")
+    print("  The provided activation code is invalid for this device.")
+    print(f"\n  Use 'ifit activate {address}' to discover the correct code.")
+    sys.exit(1)
+
+
+def _print_verbose_info(info: EquipmentInformation) -> None:
+    """Print verbose equipment information."""
+    print("\n  Values:")
+    for key, value in sorted(info.values.items()):
+        print(f"    {key}: {value}")
+
+    print(f"\n  Characteristics ({len(info.characteristics)}):")
+    for char in info.characteristics.values():
+        print(f"    {char.name} (ID: {char.id})")
+
+    print(f"\n  Capabilities ({len(info.supported_capabilities)}):")
+    for cap_id in sorted(info.supported_capabilities):
+        print(f"    ID: {cap_id}")
+
+    # Show supported commands
+    if hasattr(info, "supported_commands"):
+        supported_commands = info.supported_commands
+        print(f"\n  Commands ({len(supported_commands)}):")
+        for cmd_id in sorted(supported_commands):
+            print(f"    ID: {cmd_id}")
 
 
 async def activate(args: argparse.Namespace) -> None:
@@ -72,25 +103,17 @@ async def show_info(args: argparse.Namespace) -> None:
         print(f"  Supported Commands: {len(info.supported_commands)}")
 
         if args.verbose:
-            print("\n  Values:")
-            for key, value in sorted(info.values.items()):
-                print(f"    {key}: {value}")
+            _print_verbose_info(info)
 
-            print(f"\n  Characteristics ({len(info.characteristics)}):")
-            for char in info.characteristics.values():
-                print(f"    {char.name} (ID: {char.id})")
-
-            print(f"\n  Capabilities ({len(info.supported_capabilities)}):")
-            for cap_id in sorted(info.supported_capabilities):
-                print(f"    ID: {cap_id}")
-
-            # Show supported commands
-            if hasattr(info, "supported_commands"):
-                supported_commands = info.supported_commands
-                print(f"\n  Commands ({len(supported_commands)}):")
-                for cmd_id in sorted(supported_commands):
-                    print(f"    ID: {cmd_id}")
-
+    except ActivationError:
+        _handle_activation_error(args.address)
+    except ValueError as e:
+        print(f"\n✗ Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        LOGGER.error("Connection error", exc_info=True)
+        sys.exit(1)
     finally:
         await client.disconnect()
 
@@ -120,6 +143,15 @@ async def get_values(args: argparse.Namespace) -> None:
             for key, value in sorted(values.items()):
                 print(f"{key}: {value}")
 
+    except ActivationError:
+        _handle_activation_error(args.address)
+    except ValueError as e:
+        print(f"\n✗ Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        LOGGER.error("Connection error", exc_info=True)
+        sys.exit(1)
     finally:
         await client.disconnect()
 
@@ -155,5 +187,14 @@ async def set_values(args: argparse.Namespace) -> None:
             print(f"Error: {e}")
             sys.exit(1)
 
+    except ActivationError:
+        _handle_activation_error(args.address)
+    except ValueError as e:
+        print(f"\n✗ Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        LOGGER.error("Connection error", exc_info=True)
+        sys.exit(1)
     finally:
         await client.disconnect()

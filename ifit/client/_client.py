@@ -38,6 +38,10 @@ from .protocol import (
 LOGGER = logging.getLogger(__name__)
 
 
+class ActivationError(Exception):
+    """Raised when device activation fails."""
+
+
 @dataclass
 class _ResponseState:
     """Track in-flight response assembly state."""
@@ -286,12 +290,30 @@ class IFitBleClient:
         return header, response
 
     async def _enable_equipment(self) -> None:
-        """Send the activation code so reads/writes are accepted."""
+        """Send the activation code so reads/writes are accepted.
+
+        Raises:
+            ActivationError: If the activation code is incorrect or device doesn't respond
+            ValueError: If activation_code is not provided
+        """
         if self.activation_code is None:
             raise ValueError("activation_code is required for standard initialization")
         payload = bytes.fromhex(self.activation_code)
-        _, response = await self._send_command(Command.ENABLE, payload)
-        LOGGER.debug(f"Enable response: {response.hex()}")
+        try:
+            _, response = await self._send_command(Command.ENABLE, payload)
+            LOGGER.debug(f"Enable response: {response.hex()}")
+        except TimeoutError as e:
+            raise ActivationError(
+                "Device did not respond to activation code. "
+                "The code may be incorrect for this device."
+            ) from e
+        except ValueError as e:
+            # ValueError from parse_command_header when response code is not OK
+            if "response code not OK" in str(e):
+                raise ActivationError(
+                    "Device rejected the activation code. The code is incorrect for this device."
+                ) from e
+            raise
 
     async def write_and_read(
         self,
