@@ -58,8 +58,18 @@ async def show_info(args: argparse.Namespace) -> None:
 
         print("\n✓ Equipment Information:")
         print(f"  Type: {info.equipment.name}")
+
+        # Display device identification
+        if info.serial_number:
+            print(f"  Serial Number: {info.serial_number}")
+        if info.firmware_version:
+            print(f"  Firmware Version: {info.firmware_version}")
+        if info.reference_number is not None:
+            print(f"  Reference Number: {info.reference_number}")
+
         print(f"  Characteristics: {len(info.characteristics)}")
         print(f"  Supported Capabilities: {len(info.supported_capabilities)}")
+        print(f"  Supported Commands: {len(info.supported_commands)}")
 
         if args.verbose:
             print("\n  Values:")
