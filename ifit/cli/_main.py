@@ -35,13 +35,14 @@ Examples:
   ifit activate AA:BB:CC:DD:EE:FF --max-attempts 10
 
   # Information
-  ifit info AA:BB:CC:DD:EE:FF CODE             # Show device info
-  ifit info AA:BB:CC:DD:EE:FF CODE -v          # Verbose (capabilities, commands)
+  ifit info AA:BB:CC:DD:EE:FF [CODE]             # Show device info
+  ifit info AA:BB:CC:DD:EE:FF [CODE] -v        # Verbose (capabilities, commands)
+                                               # CODE is optional, only for validation
 
   # Reading values
-  ifit get AA:BB:CC:DD:EE:FF CODE              # Read current values
-  ifit get AA:BB:CC:DD:EE:FF CODE Kph Incline  # Read specific characteristics
-  ifit get AA:BB:CC:DD:EE:FF CODE --json       # JSON output
+  ifit get AA:BB:CC:DD:EE:FF                   # Read current values
+  ifit get AA:BB:CC:DD:EE:FF Kph Incline       # Read specific characteristics
+  ifit get AA:BB:CC:DD:EE:FF --json            # JSON output
 
   # Writing values
   ifit set AA:BB:CC:DD:EE:FF CODE Kph=5.0      # Set speed to 5 km/h
@@ -92,7 +93,11 @@ Examples:
     # Info command
     info_parser = subparsers.add_parser("info", help="Display equipment information")
     info_parser.add_argument("address", help="BLE address of the iFit equipment")
-    info_parser.add_argument("code", help="Activation code")
+    info_parser.add_argument(
+        "code",
+        nargs="?",
+        help="Activation code (optional, only used for validation)",
+    )
     info_parser.add_argument(
         "-v", "--verbose", action="store_true", help="Show detailed information"
     )
@@ -101,7 +106,6 @@ Examples:
     # Get command - read values
     get_parser = subparsers.add_parser("get", help="Read characteristic values")
     get_parser.add_argument("address", help="BLE address of the iFit equipment")
-    get_parser.add_argument("code", help="Activation code")
     get_parser.add_argument(
         "characteristics",
         nargs="*",

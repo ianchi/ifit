@@ -77,9 +77,13 @@ async def activate(args: argparse.Namespace) -> None:
 
 async def show_info(args: argparse.Namespace) -> None:
     """Connect and display equipment information."""
+    if args.code:
+        print("Connecting to device with code validation...")
+    else:
+        print("Connecting to device...")
+
     client = IFitBleClient(args.address, args.code)
     try:
-        print("Connecting to device...")
         await client.connect()
 
         info = client.equipment_information
@@ -120,7 +124,9 @@ async def show_info(args: argparse.Namespace) -> None:
 
 async def get_values(args: argparse.Namespace) -> None:
     """Read characteristic values from the equipment."""
-    client = IFitBleClient(args.address, args.code)
+    print("Connecting to device...")
+
+    client = IFitBleClient(args.address)
     try:
         await client.connect()
 
