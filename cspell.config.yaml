@@ -23,6 +23,7 @@ words:
   - bitfield
   - bitfields
   - bytearray
+  - cli
   - commitizen
   - conftest
   - coro

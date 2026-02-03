@@ -36,7 +36,7 @@ This is a Python BLE (Bluetooth Low Energy) client and FTMS relay for iFit equip
 ifit/
 ├── cli/              # Command-line interface modules
 │   ├── _main.py      # Main CLI entry point (argparse-based)
-│   ├── _device.py    # Device operations (activate, connect, info)
+│   ├── _device.py    # Device operations (activate, info, get, set)
 │   ├── _discovery.py # Device discovery and scanning
 │   ├── _monitor.py   # Monitor mode functionality
 │   └── _relay.py     # FTMS relay functionality
@@ -129,7 +129,7 @@ ifit/
 
 1. Scan for devices
 2. Activate a device to get activation code
-3. Connect/monitor/relay using device address and code
+3. Monitor/control/relay using device address and code
 
 ### Script Files
 

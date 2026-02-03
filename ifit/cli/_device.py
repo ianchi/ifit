@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
 import sys
@@ -43,46 +42,6 @@ async def activate(args: argparse.Namespace) -> None:
             await client.disconnect()
         except Exception:
             pass
-
-
-async def connect(args: argparse.Namespace) -> None:
-    """Connect to equipment and hold connection."""
-    print(f"Connecting to {args.address}...\n")
-
-    client = IFitBleClient(args.address, activation_code=args.code)
-    try:
-        await client.connect()
-        print("✓ Connected successfully!")
-
-        # Show basic info
-        info = client.equipment_information
-        if info:
-            print(f"\nEquipment Type: {info.equipment.name}")
-            if info.serial_number:
-                print(f"Serial Number: {info.serial_number}")
-            if info.firmware_version:
-                print(f"Firmware Version: {info.firmware_version}")
-
-        print("\nConnection active. Press Ctrl+C to disconnect.")
-
-        # Keep connection alive
-        try:
-            while True:
-                await asyncio.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\nDisconnecting...")
-
-    except Exception as e:
-        print(f"\n✗ Connection failed: {e}")
-        LOGGER.error("Connection error", exc_info=True)
-        raise
-
-    finally:
-        try:
-            await client.disconnect()
-            print("Disconnected.")
-        except Exception as e:
-            LOGGER.debug(f"Error during disconnect: {e}")
 
 
 async def show_info(args: argparse.Namespace) -> None:

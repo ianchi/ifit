@@ -59,13 +59,7 @@ ifit discover-activation 1a2b --address AA:BB:CC:DD:EE:FF
 ifit discover-activation 1a2b --timeout 60
 ```
 
-### Connection & Information
-
-**Test connection:**
-
-```bash
-ifit connect AA:BB:CC:DD:EE:FF CODE    # Connect and hold (Ctrl+C to stop)
-```
+### Information
 
 **Show equipment info:**
 

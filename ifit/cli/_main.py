@@ -5,7 +5,7 @@ import asyncio
 import logging
 import sys
 
-from ._device import activate, connect, get_values, set_values, show_info
+from ._device import activate, get_values, set_values, show_info
 from ._discovery import discover_activation_code, scan_devices
 from ._monitor import monitor
 from ._relay import run_ftms_relay
@@ -24,39 +24,36 @@ Workflow:
   1. Scan for devices:        ifit scan
   2. Activate a device:        ifit activate ADDRESS
   3. Use the device:           ifit monitor ADDRESS CODE
-  
+
 Examples:
   # Discovery - Find devices
   ifit scan                                    # List all iFit devices
   ifit scan --code 1a2b                        # Find specific device by BLE code
-  
+
   # Activation - Get activation code
   ifit activate AA:BB:CC:DD:EE:FF              # Auto-discover activation code
   ifit activate AA:BB:CC:DD:EE:FF --max-attempts 10
-  
-  # Connection - Quick connect test
-  ifit connect AA:BB:CC:DD:EE:FF CODE          # Connect and hold (Ctrl+C to stop)
-  
+
   # Information
   ifit info AA:BB:CC:DD:EE:FF CODE             # Show device info
   ifit info AA:BB:CC:DD:EE:FF CODE -v          # Verbose (capabilities, commands)
-  
+
   # Reading values
   ifit get AA:BB:CC:DD:EE:FF CODE              # Read current values
   ifit get AA:BB:CC:DD:EE:FF CODE Kph Incline  # Read specific characteristics
   ifit get AA:BB:CC:DD:EE:FF CODE --json       # JSON output
-  
+
   # Writing values
   ifit set AA:BB:CC:DD:EE:FF CODE Kph=5.0      # Set speed to 5 km/h
   ifit set AA:BB:CC:DD:EE:FF CODE Mode=1       # Start treadmill
   ifit set AA:BB:CC:DD:EE:FF CODE Mode=0       # Stop treadmill
   ifit set AA:BB:CC:DD:EE:FF CODE Kph=8.0 Incline=3.5
-  
+
   # Monitoring
   ifit monitor AA:BB:CC:DD:EE:FF CODE          # Monitor with full access
   ifit monitor AA:BB:CC:DD:EE:FF               # Monitor read-only (no code needed)
   ifit monitor AA:BB:CC:DD:EE:FF CODE --interval 0.5
-  
+
   # FTMS Relay - Expose as standard Bluetooth fitness device
   ifit relay AA:BB:CC:DD:EE:FF CODE            # Start FTMS relay server
   ifit relay AA:BB:CC:DD:EE:FF CODE --name "My Treadmill"
@@ -84,14 +81,6 @@ Examples:
         "--max-attempts", type=int, help="Maximum number of codes to try (default: all)"
     )
     activate_parser.set_defaults(func=activate)
-
-    # Connect command - simple connection test
-    connect_parser = subparsers.add_parser(
-        "connect", help="Connect to equipment and hold connection"
-    )
-    connect_parser.add_argument("address", help="BLE address of the iFit equipment")
-    connect_parser.add_argument("code", help="Activation code")
-    connect_parser.set_defaults(func=connect)
 
     # Info command
     info_parser = subparsers.add_parser("info", help="Display equipment information")
