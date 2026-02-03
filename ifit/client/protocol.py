@@ -41,11 +41,12 @@ class Mode(IntEnum):
 
     UNKNOWN = 0
     IDLE = 1
-    ACTIVE = 2
+    ACTIVE = 2  # Running/workout mode
     PAUSE = 3
     SUMMARY = 4
     SETTINGS = 7
     MISSING_SAFETY_KEY = 8
+    WARMUP = 10  # Pre-workout state, auto-transitions to ACTIVE after 5 minutes
 
 
 class Command(IntEnum):
@@ -257,11 +258,23 @@ CHARACTERISTICS = {
     "MaxPulse": CharacteristicDefinition(
         "MaxPulse", 49, read_only=True, converter=CONVERTERS["one_byte_int"]
     ),
-    "AverageIncline": CharacteristicDefinition(
-        "AverageIncline", 52, read_only=True, converter=CONVERTERS["double"]
+    "WarmupCountdown": CharacteristicDefinition(
+        "WarmupCountdown", 45, read_only=True, converter=CONVERTERS["two_bytes_int"]
+    ),
+    "MaxKphSession": CharacteristicDefinition(
+        "MaxKphSession", 51, read_only=True, converter=CONVERTERS["double"]
+    ),
+    "AvgInclineSession": CharacteristicDefinition(
+        "AvgInclineSession", 52, read_only=True, converter=CONVERTERS["double"]
+    ),
+    "MaxInclineSession": CharacteristicDefinition(
+        "MaxInclineSession", 53, read_only=True, converter=CONVERTERS["double"]
     ),
     "TotalTime": CharacteristicDefinition(
         "TotalTime", 70, read_only=True, converter=CONVERTERS["four_bytes_int"]
+    ),
+    "EffortLevel": CharacteristicDefinition(
+        "EffortLevel", 72, read_only=True, converter=CONVERTERS["two_bytes_int"]
     ),
     "PausedTime": CharacteristicDefinition(
         "PausedTime", 103, read_only=True, converter=CONVERTERS["four_bytes_int"]
@@ -334,20 +347,11 @@ CHARACTERISTICS = {
     "Unknown44": CharacteristicDefinition(
         "Unknown44", 44, read_only=True, converter=CONVERTERS["four_bytes_int"]
     ),
-    "Unknown45": CharacteristicDefinition(
-        "Unknown45", 45, read_only=True, converter=CONVERTERS["two_bytes_int"]
-    ),
     "Unknown47": CharacteristicDefinition(
         "Unknown47", 47, read_only=True, converter=CONVERTERS["four_bytes_int"]
     ),
     "Unknown48": CharacteristicDefinition(
         "Unknown48", 48, read_only=True, converter=CONVERTERS["four_bytes_int"]
-    ),
-    "Unknown51": CharacteristicDefinition(
-        "Unknown51", 51, read_only=True, converter=CONVERTERS["two_bytes_int"]
-    ),
-    "Unknown53": CharacteristicDefinition(
-        "Unknown53", 53, read_only=True, converter=CONVERTERS["two_bytes_int"]
     ),
     "Unknown54": CharacteristicDefinition(
         "Unknown54", 54, read_only=True, converter=CONVERTERS["two_bytes_int"]
@@ -369,9 +373,6 @@ CHARACTERISTICS = {
     ),
     "Unknown66": CharacteristicDefinition(
         "Unknown66", 66, read_only=True, converter=CONVERTERS["four_bytes_int"]
-    ),
-    "Unknown72": CharacteristicDefinition(
-        "Unknown72", 72, read_only=True, converter=CONVERTERS["two_bytes_int"]
     ),
     "Unknown73": CharacteristicDefinition(
         "Unknown73", 73, read_only=True, converter=CONVERTERS["four_bytes_int"]
