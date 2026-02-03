@@ -34,7 +34,8 @@ async def monitor(args: argparse.Namespace) -> None:
 
             speed = values.get("CurrentKph", values.get("Kph", 0.0))
             incline = values.get("CurrentIncline", values.get("Incline", 0.0))
-            pulse = values.get("Pulse", 0)
+            pulse_data = values.get("Pulse", {})
+            pulse = pulse_data.get("pulse", 0) if isinstance(pulse_data, dict) else pulse_data
             mode_val = values.get("Mode", 0)
 
             print(f"{iteration:>6} | {speed:>8.1f} | {incline:>8.1f} | {pulse:>8} | {mode_val:>6}")
