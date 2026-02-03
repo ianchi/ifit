@@ -496,6 +496,11 @@ def parse_equipment_information_response(response: bytes) -> dict[int, Character
                 characteristic = CHARACTERISTICS_BY_ID.get(char_id)
                 if characteristic:
                     characteristics[characteristic.id] = characteristic
+                else:
+                    # Unknown characteristic id - create a placeholder
+                    characteristics[char_id] = CharacteristicDefinition(
+                        name=f"Unknown_{char_id}", id=char_id, read_only=True, converter=None
+                    )
     return characteristics
 
 
