@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import TYPE_CHECKING
 
 from .._scanner import find_ifit_device
@@ -213,7 +214,12 @@ class ActivationCodeDiscovery:
 
     async def _start_peripheral_server(self) -> None:
         """Start a BLE peripheral server that mimics the treadmill."""
-        self.server = BlessServer(name=self._peripheral_name)
+        # Platform-specific BlessServer initialization
+        if sys.platform == "linux":
+            loop = asyncio.get_event_loop()
+            self.server = BlessServer(name=self._peripheral_name, loop=loop)
+        else:
+            self.server = BlessServer(name=self._peripheral_name, name_overwrite=True)
 
         # Add the main iFit service with TX/RX characteristics
         await self.server.add_new_service(BLE_UUIDS["service"])  # type: ignore[union-attr]
@@ -315,9 +321,8 @@ class ActivationCodeDiscovery:
 
         # Forward response back to the app
         if self.server:
-            await self.server.update_value(  # type: ignore[union-attr]
-                BLE_UUIDS["service"], BLE_UUIDS["rx"], data
-            )
+            self.server.get_characteristic(BLE_UUIDS["rx"]).value = bytearray(data)  # type: ignore[union-attr]
+            self.server.update_value(BLE_UUIDS["service"], BLE_UUIDS["rx"])  # type: ignore[union-attr]
 
     async def _wait_for_activation_code(self) -> None:
         """Wait until activation code is captured."""

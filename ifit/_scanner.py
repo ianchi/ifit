@@ -12,6 +12,7 @@ class IFitDevice:
     address: str
     name: str | None
     manufacturer_data: bytes
+    code: str
 
 
 def _normalize_ble_code(code: str) -> str:
@@ -20,6 +21,19 @@ def _normalize_ble_code(code: str) -> str:
     if len(cleaned) != 4 or any(c not in "0123456789abcdef" for c in cleaned):
         raise ValueError("BLE code must be a 4-character hex string")
     return cleaned
+
+
+def _extract_displayed_code(manufacturer_data: bytes) -> str:
+    """Extract the displayed BLE code from manufacturer data.
+
+    The last 3 bytes contain: 0xdd + reversed 2-byte code.
+    Reverse the code bytes to get the displayed format.
+    """
+    if len(manufacturer_data) < 3 or manufacturer_data[-3] != 0xDD:
+        raise ValueError("Invalid manufacturer data format")
+    # Last 2 bytes are the reversed code, reverse them back
+    reversed_code = manufacturer_data[-2:]
+    return reversed_code[::-1].hex()
 
 
 async def find_ifit_device(code: str, timeout: float = 10.0) -> IFitDevice:
@@ -40,6 +54,7 @@ async def find_ifit_device(code: str, timeout: float = 10.0) -> IFitDevice:
                     address=device.address,
                     name=device.name,
                     manufacturer_data=payload,
+                    code=_extract_displayed_code(payload),
                 )
 
     raise TimeoutError("No iFit device found with the provided BLE code")
@@ -62,6 +77,7 @@ async def find_all_ifit_devices(timeout: float = 10.0) -> list[IFitDevice]:
                         address=device.address,
                         name=device.name,
                         manufacturer_data=payload,
+                        code=_extract_displayed_code(payload),
                     )
                 )
                 break

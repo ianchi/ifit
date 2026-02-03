@@ -283,6 +283,7 @@ reportMissingImports = "error"
 reportUnusedImport = "warning"
 reportUnusedVariable = "warning"
 reportDuplicateImport = "warning"
+reportPrivateImportUsage = "none"
 strictListInference = true
 strictDictionaryInference = true
 
