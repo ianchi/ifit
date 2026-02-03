@@ -20,37 +20,66 @@ def _handle_activation_error(address: str) -> None:
     sys.exit(1)
 
 
+def _format_value(value: object) -> str:
+    """Format a characteristic value for display."""
+    if isinstance(value, (int, float)):
+        return f"{value:>12.1f}"
+    if isinstance(value, dict):
+        # For complex values like Pulse, try to get a simple representation
+        simple_val = value.get("pulse", value.get("value", str(value)[:10]))
+        return f"{simple_val:>12}"
+    return f"{str(value)[:12]:>12}"
+
+
+async def _monitor_custom_characteristics(
+    client: IFitBleClient,
+    characteristics: list[str | int],
+    char_names: list[str],
+    interval: float,
+) -> None:
+    """Monitor custom set of characteristics."""
+    print(f"{'Time':>6} | " + " | ".join(f"{c:>12}" for c in char_names))
+    print("-" * (10 + len(char_names) * 16))
+
+    iteration = 0
+    while True:
+        values = await client.read_characteristics(characteristics)
+
+        # Display values for each requested characteristic
+        row = f"{iteration:>6} | "
+        for char_name in char_names:
+            value = values.get(char_name, "N/A")
+            row += f"{_format_value(value)} | "
+
+        print(row.rstrip(" |"))
+        iteration += 1
+        await asyncio.sleep(interval)
+
+
 async def monitor(args: argparse.Namespace) -> None:
-    """Monitor real-time values from equipment (code optional for read-only)."""
-    # Code is optional - without it, we're in read-only mode
-    code = args.code if args.code else None
-    mode = "full access" if code else "read-only"
+    """Monitor real-time values from equipment."""
+    print(f"Connecting to {args.address}...\n")
 
-    print(f"Connecting to {args.address} ({mode} mode)...\n")
-
-    client = IFitBleClient(args.address, code)
+    client = IFitBleClient(args.address)
     try:
         await client.connect()
         print("Monitoring (Ctrl+C to stop)...\n")
 
-        # Print header
-        print(f"{'Time':>6} | {'Speed':>8} | {'Incline':>8} | {'Pulse':>8} | {'Mode':>6}")
-        print("-" * 50)
+        # Parse custom characteristics if provided, otherwise use defaults
+        if args.characteristics:
+            custom_chars: list[str | int] = []
+            char_names = args.characteristics
+            for char in args.characteristics:
+                try:
+                    custom_chars.append(int(char))
+                except ValueError:
+                    custom_chars.append(char)
+        else:
+            # Default characteristics to monitor
+            custom_chars: list[str | int] = ["Kph", "CurrentIncline", "Pulse", "Mode"]
+            char_names = ["Kph", "Incline", "Pulse", "Mode"]
 
-        iteration = 0
-        while True:
-            values = await client.read_current_values()
-
-            speed = values.get("CurrentKph", values.get("Kph", 0.0))
-            incline = values.get("CurrentIncline", values.get("Incline", 0.0))
-            pulse_data = values.get("Pulse", {})
-            pulse = pulse_data.get("pulse", 0) if isinstance(pulse_data, dict) else pulse_data
-            mode_val = values.get("Mode", 0)
-
-            print(f"{iteration:>6} | {speed:>8.1f} | {incline:>8.1f} | {pulse:>8} | {mode_val:>6}")
-
-            iteration += 1
-            await asyncio.sleep(args.interval)
+        await _monitor_custom_characteristics(client, custom_chars, char_names, args.interval)
 
     except KeyboardInterrupt:
         print("\n\nMonitoring stopped")

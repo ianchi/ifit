@@ -22,8 +22,8 @@ def _parse_args() -> argparse.Namespace:
         epilog="""
 Workflow:
   1. Scan for devices:        ifit scan
-  2. Activate a device:        ifit activate ADDRESS
-  3. Use the device:           ifit monitor ADDRESS CODE
+  2. Find activation code:        ifit activate ADDRESS
+  3. Use the device:           ifit set ADDRESS CODE Kph=5.0
 
 Examples:
   # Discovery - Find devices
@@ -51,9 +51,9 @@ Examples:
   ifit set AA:BB:CC:DD:EE:FF CODE Kph=8.0 Incline=3.5
 
   # Monitoring
-  ifit monitor AA:BB:CC:DD:EE:FF CODE          # Monitor with full access
-  ifit monitor AA:BB:CC:DD:EE:FF               # Monitor read-only (no code needed)
-  ifit monitor AA:BB:CC:DD:EE:FF CODE --interval 0.5
+  ifit monitor AA:BB:CC:DD:EE:FF               # Monitor default characteristics
+  ifit monitor AA:BB:CC:DD:EE:FF Kph Incline Pulse  # Monitor specific characteristics
+  ifit monitor AA:BB:CC:DD:EE:FF Kph Pulse --interval 0.5
 
   # FTMS Relay - Expose as standard Bluetooth fitness device
   ifit relay AA:BB:CC:DD:EE:FF CODE            # Start FTMS relay server
@@ -123,13 +123,15 @@ Examples:
     )
     set_parser.set_defaults(func=set_values)
 
-    # Monitor command - unified monitoring (code optional)
+    # Monitor command
     monitor_parser = subparsers.add_parser(
-        "monitor", help="Monitor real-time values (code optional for read-only mode)"
+        "monitor", help="Monitor real-time values from equipment"
     )
     monitor_parser.add_argument("address", help="BLE address of the iFit equipment")
     monitor_parser.add_argument(
-        "code", nargs="?", help="Activation code (optional - without it, read-only mode)"
+        "characteristics",
+        nargs="*",
+        help="Characteristic names or IDs to monitor (omit for default set)",
     )
     monitor_parser.add_argument(
         "--interval", type=float, default=1.0, help="Update interval in seconds (default: 1.0)"
