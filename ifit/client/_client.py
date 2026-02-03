@@ -337,7 +337,15 @@ class IFitBleClient:
         writes = []
         for key, value in values.items():
             if key not in CHARACTERISTICS:
-                raise ValueError(f"Unknown characteristic name: {key}")
+                # Find similar characteristic names (case-insensitive match)
+                similar = [k for k in CHARACTERISTICS if k.lower() == key.lower()]
+                error_msg = f"Unknown characteristic name: '{key}'"
+                if similar:
+                    error_msg += f". Did you mean '{similar[0]}'?"
+                else:
+                    valid_names = sorted(CHARACTERISTICS.keys())
+                    error_msg += f". Valid names are: {', '.join(valid_names)}"
+                raise ValueError(error_msg)
             writes.append(WriteValue(CHARACTERISTICS[key], value))
         await self.write_and_read(writes, [])
 

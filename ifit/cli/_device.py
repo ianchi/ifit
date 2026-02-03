@@ -179,8 +179,12 @@ async def set_values(args: argparse.Namespace) -> None:
 
             values[key] = value
 
-        await client.write_characteristics(values)
-        print(f"✓ Set {', '.join(f'{k}={v}' for k, v in values.items())}")
+        try:
+            await client.write_characteristics(values)
+            print(f"✓ Set {', '.join(f'{k}={v}' for k, v in values.items())}")
+        except ValueError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
 
     finally:
         await client.disconnect()
