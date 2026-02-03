@@ -32,7 +32,9 @@ def _handle_activation_error(address: str) -> None:
 async def run_ftms_relay(args: argparse.Namespace) -> None:
     """Run the FTMS relay server until interrupted."""
     if not FTMS_AVAILABLE:
-        print('✗ FTMS server not available. Install with: pip install -e ".[ftms]"')
+        print("✗ FTMS server not available.")
+        print("  The FTMS server requires the 'bless' library.")
+        print("  Install with: poetry install --extras server")
         sys.exit(1)
 
     client = IFitBleClient(args.address, args.code)

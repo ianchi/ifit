@@ -8,16 +8,21 @@ from collections.abc import Coroutine
 from struct import unpack
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from bless import (  # type: ignore[import-not-found]
+# Try to import bless - only available on Linux
+try:
+    from bless import (
         BlessGATTCharacteristic,
         BlessServer,
         GATTAttributePermissions,
         GATTCharacteristicProperties,
     )
-else:
-    with contextlib.suppress(ImportError):
-        from bless import (
+
+    BLESS_AVAILABLE = True
+except ImportError:
+    BLESS_AVAILABLE = False
+    if TYPE_CHECKING:
+        # Type stubs for type checking when bless is not available
+        from bless import (  # type: ignore[import-not-found]
             BlessGATTCharacteristic,
             BlessServer,
             GATTAttributePermissions,
@@ -73,6 +78,13 @@ class FtmsBleRelay:
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         """Initialize relay state and BLE characteristics."""
+        if not BLESS_AVAILABLE:
+            msg = (
+                "FTMS server requires 'bless' library which is only available on Linux. "
+                "Install with: poetry install --extras server"
+            )
+            raise RuntimeError(msg)
+
         self._client = client
         self._config = config
         self._ranges = ranges or FtmsRanges()
