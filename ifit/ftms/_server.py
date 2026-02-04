@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import sys
 from collections.abc import Coroutine
 from struct import unpack
 from typing import TYPE_CHECKING
 
-# Try to import bless - only available on Linux
+# Try to import bless - optional dependency
 try:
     from bless import (
         BlessGATTCharacteristic,
@@ -21,7 +20,7 @@ try:
 except ImportError:
     BLESS_AVAILABLE = False
     if TYPE_CHECKING:
-        # Type stubs for type checking when bless is not available
+        # Type stubs for type checking when bless is not installed
         from bless import (  # type: ignore[import-not-found]
             BlessGATTCharacteristic,
             BlessServer,
@@ -80,8 +79,7 @@ class FtmsBleRelay:
         """Initialize relay state and BLE characteristics."""
         if not BLESS_AVAILABLE:
             msg = (
-                "FTMS server requires 'bless' library which is only available on Linux. "
-                "Install with: poetry install --extras server"
+                "FTMS server requires 'bless' library. Install with: poetry install --extras server"
             )
             raise RuntimeError(msg)
 
@@ -89,11 +87,7 @@ class FtmsBleRelay:
         self._config = config
         self._ranges = ranges or FtmsRanges()
         self._loop = loop or asyncio.get_event_loop()
-        # Platform-specific BlessServer initialization
-        if sys.platform == "linux":
-            self._server = BlessServer(name=config.name, loop=self._loop)
-        else:
-            self._server = BlessServer(name=config.name, name_overwrite=True)
+        self._server = BlessServer(name=config.name, name_overwrite=True)
         self._update_task: asyncio.Task[None] | None = None
         self._status_value = bytearray(b"\x00")
         self._control_point_value = bytearray(b"\x00")
@@ -105,8 +99,8 @@ class FtmsBleRelay:
     async def start(self) -> None:
         """Start the BLE server and connect to the iFit equipment."""
         await self._client.connect()
-        self._update_ranges_from_equipment()
         await self._init_gatt()
+        self._update_ranges_from_equipment()
         await self._server.start()
         self._update_task = self._loop.create_task(self._notify_loop())
         LOGGER.info("FTMS server started")
