@@ -65,7 +65,7 @@ description = "Python WinRT bindings for Bleak"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "extra == \"server\" and sys_platform == \"linux\" and platform_system == \"Windows\" or extra == \"all\" and sys_platform == \"linux\" and platform_system == \"Windows\""
+markers = "extra == \"server\" and platform_system == \"Windows\" or extra == \"all\" and platform_system == \"Windows\""
 files = [
     {file = "bleak-winrt-1.2.0.tar.gz", hash = "sha256:0577d070251b9354fc6c45ffac57e39341ebb08ead014b1bdbd43e211d2ce1d6"},
     {file = "bleak_winrt-1.2.0-cp310-cp310-win32.whl", hash = "sha256:a2ae3054d6843ae0cfd3b94c83293a1dfd5804393977dd69bde91cb5099fc47c"},
@@ -87,7 +87,7 @@ description = "A Bluetooth Low Energy Server supplement to Bleak"
 optional = true
 python-versions = ">=3.7"
 groups = ["main"]
-markers = "extra == \"server\" and sys_platform == \"linux\" or extra == \"all\" and sys_platform == \"linux\""
+markers = "extra == \"server\" or extra == \"all\""
 files = [
     {file = "bless-0.3.0-py3-none-any.whl", hash = "sha256:29c5a87a100a43f1dddab29e46a5adfdc871d42f4d421f13ae5c7a0ec23e7a6b"},
     {file = "bless-0.3.0.tar.gz", hash = "sha256:5a62105dfe204be44ab36d20fb9071a994167d5ddd9fee722fb2b5612d7a9ea2"},
@@ -433,7 +433,7 @@ description = "A zero-dependency DBus library for Python with asyncio support"
 optional = true
 python-versions = ">=3.6.0"
 groups = ["main"]
-markers = "extra == \"server\" and sys_platform == \"linux\" and platform_system == \"Linux\" or extra == \"all\" and sys_platform == \"linux\" and platform_system == \"Linux\""
+markers = "extra == \"server\" and platform_system == \"Linux\" or extra == \"all\" and platform_system == \"Linux\""
 files = [
     {file = "dbus_next-0.2.3-py3-none-any.whl", hash = "sha256:58948f9aff9db08316734c0be2a120f6dc502124d9642f55e90ac82ffb16a18b"},
     {file = "dbus_next-0.2.3.tar.gz", hash = "sha256:f4eae26909332ada528c0a3549dda8d4f088f9b365153952a408e28023a626a5"},
@@ -1059,7 +1059,7 @@ description = "Python for Window Extensions"
 optional = true
 python-versions = "*"
 groups = ["main"]
-markers = "extra == \"server\" and sys_platform == \"linux\" and platform_system == \"Windows\" or extra == \"all\" and sys_platform == \"linux\" and platform_system == \"Windows\""
+markers = "extra == \"server\" and platform_system == \"Windows\" or extra == \"all\" and platform_system == \"Windows\""
 files = [
     {file = "pywin32-311-cp310-cp310-win32.whl", hash = "sha256:d03ff496d2a0cd4a5893504789d4a15399133fe82517455e78bad62efbb7f0a3"},
     {file = "pywin32-311-cp310-cp310-win_amd64.whl", hash = "sha256:797c2772017851984b97180b0bebe4b620bb86328e8a884bb626156295a63b3b"},
@@ -1712,4 +1712,4 @@ server = ["bless"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.12"
-content-hash = "72628238be20990dbd55a780016281406b0da553f7358c540bbc55dac4d84515"
+content-hash = "2163f82496cf794f95204ce390f2bbcd86525f79e4f30714a4385bb3fc689d36"
