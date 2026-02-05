@@ -3,6 +3,14 @@
 This module provides a BLE Fitness Machine Service (FTMS) relay that bridges
 BLE clients to iFit equipment via `IFitBleClient`.
 
+## Platform Support
+
+The FTMS relay works on **Windows, macOS, and Linux**. The `bless` library automatically
+handles platform differences:
+
+- **Linux**: Creates GAP, GATT, Device Information, and FTMS services
+- **Windows/macOS**: Creates FTMS service only (OS provides GAP/GATT/Device Info automatically)
+
 ## Data flow
 
 1. The relay connects to iFit equipment and reads equipment limits to populate

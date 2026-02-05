@@ -14,6 +14,7 @@ def bt16(uuid16: int) -> str:
 # Standard Bluetooth services
 GAP_SERVICE_UUID = bt16(0x1800)
 GATT_SERVICE_UUID = bt16(0x1801)
+DEVICE_INFORMATION_SERVICE_UUID = bt16(0x180A)
 
 # GAP characteristics
 DEVICE_NAME_UUID = bt16(0x2A00)
@@ -21,6 +22,14 @@ APPEARANCE_UUID = bt16(0x2A01)
 
 # GATT characteristics
 SERVICE_CHANGED_UUID = bt16(0x2A05)
+
+# Device Information Service characteristics
+MANUFACTURER_NAME_UUID = bt16(0x2A29)
+MODEL_NUMBER_UUID = bt16(0x2A24)
+SERIAL_NUMBER_UUID = bt16(0x2A25)
+HARDWARE_REVISION_UUID = bt16(0x2A27)
+FIRMWARE_REVISION_UUID = bt16(0x2A26)
+SOFTWARE_REVISION_UUID = bt16(0x2A28)
 
 # FTMS Service and characteristics
 FTMS_SERVICE_UUID = bt16(0x1826)

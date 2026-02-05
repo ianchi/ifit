@@ -36,14 +36,21 @@ from ..client.protocol import Mode
 from ._ftms import (
     APPEARANCE_TREADMILL,
     APPEARANCE_UUID,
+    DEVICE_INFORMATION_SERVICE_UUID,
     DEVICE_NAME_UUID,
+    FIRMWARE_REVISION_UUID,
     FITNESS_MACHINE_CONTROL_POINT_UUID,
     FITNESS_MACHINE_FEATURE_UUID,
     FITNESS_MACHINE_STATUS_UUID,
     FTMS_SERVICE_UUID,
     GAP_SERVICE_UUID,
     GATT_SERVICE_UUID,
+    HARDWARE_REVISION_UUID,
+    MANUFACTURER_NAME_UUID,
+    MODEL_NUMBER_UUID,
+    SERIAL_NUMBER_UUID,
     SERVICE_CHANGED_UUID,
+    SOFTWARE_REVISION_UUID,
     SUPPORTED_INCLINE_RANGE_UUID,
     SUPPORTED_SPEED_RANGE_UUID,
     TREADMILL_DATA_UUID,
@@ -179,9 +186,57 @@ class FtmsBleRelay:
                 GATTAttributePermissions.readable,
             )
             LOGGER.debug("Added GATT service with Service Changed")
+
+            # Add Device Information Service (expected by many fitness apps)
+            # On Linux, we can add this service; on Windows/macOS it's provided by OS
+            await self._server.add_new_service(DEVICE_INFORMATION_SERVICE_UUID)
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                MANUFACTURER_NAME_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"iFit"),
+                GATTAttributePermissions.readable,
+            )
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                MODEL_NUMBER_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"FTMS Relay"),
+                GATTAttributePermissions.readable,
+            )
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                SERIAL_NUMBER_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"0000001"),
+                GATTAttributePermissions.readable,
+            )
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                FIRMWARE_REVISION_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"1.0.0"),
+                GATTAttributePermissions.readable,
+            )
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                HARDWARE_REVISION_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"1.0"),
+                GATTAttributePermissions.readable,
+            )
+            await self._server.add_new_characteristic(
+                DEVICE_INFORMATION_SERVICE_UUID,
+                SOFTWARE_REVISION_UUID,
+                GATTCharacteristicProperties.read,
+                bytearray(b"1.0.0"),
+                GATTAttributePermissions.readable,
+            )
+            LOGGER.debug("Added Device Information Service")
         else:
             LOGGER.debug(
-                "Skipping GAP/GATT services on %s (provided by OS BLE stack)", sys.platform
+                "Skipping GAP/GATT/Device Info services on %s (provided by OS BLE stack)",
+                sys.platform,
             )
 
         # Add FTMS service
