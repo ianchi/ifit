@@ -489,7 +489,7 @@ class FtmsBleRelay:
         values = await self._client.read_characteristics(
             ["Kph", "CurrentIncline", "Distance", "Pulse", "Mode"]
         )
-        current_kph = float(values.get("Kph", 0.0))
+        current_kph = float(values.get("CurrentKph", 0.0)) or float(values.get("Kph", 0.0))
         current_incline = float(values.get("CurrentIncline", 0.0))
         distance = float(values.get("Distance", 0.0))
         pulse_data = values.get("Pulse", {})
@@ -506,13 +506,11 @@ class FtmsBleRelay:
         )
 
         # Compose FTMS treadmill data with optional fields for incline/distance/hr.
-        self._treadmill_value = bytearray(
-            encode_treadmill_data(
-                speed_kph=current_kph,
-                incline_percent=current_incline,
-                distance_km=distance,
-                heart_rate_bpm=heart_rate if heart_rate else None,
-            )
+        self._treadmill_value = encode_treadmill_data(
+            speed_kph=current_kph,
+            incline_percent=current_incline,
+            distance_m=distance,
+            heart_rate_bpm=heart_rate if heart_rate else None,
         )
 
         # Update treadmill data and notify only if client is subscribed
@@ -521,7 +519,11 @@ class FtmsBleRelay:
             treadmill_char.value = self._treadmill_value
             # Always send notification - if no one is subscribed, it's ignored by BLE stack
             self._server.update_value(FTMS_SERVICE_UUID, TREADMILL_DATA_UUID)
-            LOGGER.debug("Sent treadmill data notification (%d bytes)", len(self._treadmill_value))
+            LOGGER.debug(
+                "Sent treadmill data notification (%d bytes): 0x%s",
+                len(self._treadmill_value),
+                self._treadmill_value.hex(),
+            )
 
         # Update status if changed and notify only if client is subscribed
         status = self._encode_status_from_mode(mode)

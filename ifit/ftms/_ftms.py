@@ -44,10 +44,11 @@ SUPPORTED_INCLINE_RANGE_UUID = bt16(0x2AD5)
 # GAP Appearance value for treadmill (Generic Running Walking Sensor)
 APPEARANCE_TREADMILL = 0x0480
 
-TREADMILL_FLAG_MORE_DATA = 0x0001
-TREADMILL_FLAG_INCLINE = 0x0008
-TREADMILL_FLAG_DISTANCE = 0x0010
-TREADMILL_FLAG_HEART_RATE = 0x0040
+# FTMS Treadmill Data flags (bits indicate which optional fields are present)
+TREADMILL_FLAG_MORE_DATA = 0x0001  # Bit 0: More Data (1 if fragmented, 0 if complete)
+TREADMILL_FLAG_DISTANCE = 0x0004  # Bit 2: Total Distance Present
+TREADMILL_FLAG_INCLINE = 0x0008  # Bit 3: Inclination and Ramp Angle Setting Present
+TREADMILL_FLAG_HEART_RATE = 0x0100  # Bit 8: Heart Rate Present
 
 
 class ControlPointOpcode(IntEnum):
@@ -144,35 +145,61 @@ def encode_treadmill_data(
     *,
     speed_kph: float | None,
     incline_percent: float | None,
-    distance_km: float | None,
+    distance_m: float | None,
     heart_rate_bpm: int | None,
-) -> bytes:
-    """Encode treadmill data with optional incline, distance, and heart rate."""
+) -> bytearray:
+    """Encode treadmill data with optional incline, distance, and heart rate.
+
+    Field order per FTMS spec:
+    1. Flags (uint16)
+    2. Instantaneous Speed (uint16) - always present
+    3. Average Speed (uint16) - if bit 1 set
+    4. Total Distance (uint24) - if bit 2 set
+    5. Inclination (sint16) - if bit 3 set
+    6. Ramp Angle Setting (sint16) - if bit 3 set
+    7. Positive Elevation Gain (uint16) - if bit 4 set
+    8. Instantaneous Pace (uint8) - if bit 5 set
+    9. Average Pace (uint8) - if bit 6 set
+    10. Expended Energy (complex) - if bit 7 set
+    11. Heart Rate (uint8) - if bit 8 set
+    12. Metabolic Equivalent (uint8) - if bit 9 set
+    13. Elapsed Time (uint16) - if bit 10 set
+    14. Remaining Time (uint16) - if bit 11 set
+    15. Force on Belt and Power Output (complex) - if bit 12 set
+    """
     flags = 0
-    # Signal that additional fields may follow.
-    flags |= TREADMILL_FLAG_MORE_DATA
+    # More Data bit = 0: Our data always fits in one notification (~12 bytes max)
+    # More Data bit would be 1 only if we needed to fragment across multiple notifications
 
     speed_raw = _u16_or_unknown(speed_kph, 100.0, 0xFFFF)
     payload = bytearray(pack("<H", flags))
     payload += pack("<H", speed_raw)
 
+    # Note: Average Speed (bit 1) not implemented - skip to Distance
+
+    if distance_m is not None:
+        flags |= TREADMILL_FLAG_DISTANCE
+        distance_raw = max(0, min(round(distance_m), 0xFFFFFF))
+        payload += distance_raw.to_bytes(3, "little")
+
     if incline_percent is not None:
         flags |= TREADMILL_FLAG_INCLINE
         incline_raw = _s16_or_unknown(incline_percent, 10.0, 0x7FFF)
+        # Per FTMS spec, when bit 3 is set, BOTH inclination and ramp angle must be present
+        payload += pack("<h", incline_raw)
+        # Ramp angle setting - for simple treadmills, same as inclination
         payload += pack("<h", incline_raw)
 
-    if distance_km is not None:
-        flags |= TREADMILL_FLAG_DISTANCE
-        distance_raw = max(0, min(round(distance_km * 10), 0xFFFFFF))
-        payload += distance_raw.to_bytes(3, "little")
+    # Note: Elevation Gain (bit 4), Pace fields (bits 5-6), Energy (bit 7) not implemented
 
     if heart_rate_bpm is not None:
         flags |= TREADMILL_FLAG_HEART_RATE
         hr_raw = max(0, min(int(heart_rate_bpm), 0xFF))
         payload += pack("<B", hr_raw)
 
+    # Update flags at the beginning of payload
     payload[0:2] = pack("<H", flags)
-    return bytes(payload)
+    return payload
 
 
 def encode_control_point_response(
