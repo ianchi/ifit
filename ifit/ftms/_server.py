@@ -45,8 +45,11 @@ from ._ftms import (
     FtmsRanges,
     encode_control_point_response,
     encode_fitness_machine_feature,
+    encode_status_safety_key,
     encode_status_started,
     encode_status_stopped,
+    encode_status_target_incline_changed,
+    encode_status_target_speed_changed,
     encode_supported_incline_range,
     encode_supported_speed_range,
     encode_treadmill_data,
@@ -65,6 +68,9 @@ TARGET_VALUE_LENGTH = 3  # Opcode + 2-byte value
 # FTMS unknown value sentinels
 FTMS_UNKNOWN_UINT16 = 0xFFFF
 FTMS_UNKNOWN_SINT16 = 0x7FFF
+
+# Target value change detection threshold
+TARGET_CHANGE_THRESHOLD = 0.01  # Minimum change to trigger status notification
 
 
 @dataclass
@@ -112,11 +118,17 @@ class FtmsBleRelay:
         self._supported_incline_range = bytearray(encode_supported_incline_range(self._ranges))
         self._device_info = DeviceInformation()
 
+        # Track last known target values for change detection
+        self._last_target_speed: float | None = None
+        self._last_target_incline: float | None = None
+
         # Control point handlers dispatch dictionary
         self._control_handlers: dict[ControlPointOpcode, Callable[[int, bytes], None]] = {
             ControlPointOpcode.REQUEST_CONTROL: self._handle_request_control,
             ControlPointOpcode.SET_TARGET_SPEED: self._handle_target_speed,
             ControlPointOpcode.SET_TARGET_INCLINE: self._handle_target_incline,
+            ControlPointOpcode.START_OR_RESUME: self._handle_start_or_resume,
+            ControlPointOpcode.STOP_OR_PAUSE: self._handle_stop_or_pause,
         }
         LOGGER.info(
             "Initialized FTMS relay for '%s' with update interval %.1fs",
@@ -135,6 +147,9 @@ class FtmsBleRelay:
 
         LOGGER.debug("Initializing GATT services and characteristics...")
         await self._init_gatt()
+
+        LOGGER.debug("Updating characteristic values with equipment ranges...")
+        self._update_range_characteristics()
 
         LOGGER.info("Starting BLE server '%s'...", self._config.name)
         # Configure advertisement to include FTMS service UUID
@@ -369,6 +384,58 @@ class FtmsBleRelay:
         LOGGER.info("Client requested control - granting")
         self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
 
+    def _handle_start_or_resume(self, opcode: int, _value: bytes) -> None:
+        """Handle START_OR_RESUME opcode.
+
+        Args:
+            opcode: The control point opcode
+            _value: The full control point message (unused for this opcode)
+        """
+        LOGGER.info("Client requested start/resume")
+        # Set iFit to active mode
+        self._schedule_task(
+            self._client.write_characteristics({"Mode": Mode.ACTIVE}),
+            "start_or_resume",
+        )
+        self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
+
+        # Send status notification
+        status = encode_status_started()
+        self._status_value = bytearray(status)
+        self._notify_characteristic(
+            FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID, self._status_value
+        )
+        LOGGER.info("Sent started notification")
+
+    def _handle_stop_or_pause(self, opcode: int, value: bytes) -> None:
+        """Handle STOP_OR_PAUSE opcode with optional control parameter.
+
+        Args:
+            opcode: The control point opcode
+            value: The full control point message (may include control parameter)
+        """
+        # Per spec, may include Control Information byte (0x01=Stop, 0x02=Pause)
+        pause_mode = Mode.PAUSE  # Default to pause
+        if len(value) >= 2:  # noqa: PLR2004
+            control_param = value[1]
+            if control_param == 0x01:
+                pause_mode = Mode.IDLE
+
+        LOGGER.info("Client requested stop/pause (mode=%s)", pause_mode)
+        self._schedule_task(
+            self._client.write_characteristics({"Mode": pause_mode}),
+            "stop_or_pause",
+        )
+        self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
+
+        # Send status notification
+        status = encode_status_stopped()
+        self._status_value = bytearray(status)
+        self._notify_characteristic(
+            FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID, self._status_value
+        )
+        LOGGER.info("Sent stopped notification")
+
     def _handle_target_value(
         self,
         opcode: int,
@@ -551,6 +618,8 @@ class FtmsBleRelay:
         current_incline = float(values.get("CurrentIncline", 0.0)) or float(
             values.get("Incline", 0.0)
         )
+        target_kph = float(values.get("Kph", 0.0))
+        target_incline = float(values.get("Incline", 0.0))
         distance = float(values.get("Distance", 0.0))
         pulse_data = values.get("Pulse", {})
         heart_rate = int(pulse_data.get("pulse", 0)) if isinstance(pulse_data, dict) else 0
@@ -576,8 +645,46 @@ class FtmsBleRelay:
         # Update and notify treadmill data
         self._notify_characteristic(FTMS_SERVICE_UUID, TREADMILL_DATA_UUID, self._treadmill_value)
 
-        # Update status if changed
+        # Check for target speed changes and send status notifications
+        self._check_target_changes(target_kph, target_incline)
+
+        # Update status if mode changed
         self._update_status(mode)
+
+    def _check_target_changes(self, target_kph: float, target_incline: float) -> None:
+        """Check for target speed/incline changes and send status notifications.
+
+        Args:
+            target_kph: Current target speed in km/h
+            target_incline: Current target incline in percent
+        """
+        # Check target speed change
+        if (
+            self._last_target_speed is not None
+            and abs(target_kph - self._last_target_speed) > TARGET_CHANGE_THRESHOLD
+        ):
+            status = encode_status_target_speed_changed(target_kph)
+            self._status_value = bytearray(status)
+            self._notify_characteristic(
+                FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID, self._status_value
+            )
+            LOGGER.info("Target speed changed: %.2f kph", target_kph)
+
+        # Check target incline change
+        if (
+            self._last_target_incline is not None
+            and abs(target_incline - self._last_target_incline) > TARGET_CHANGE_THRESHOLD
+        ):
+            status = encode_status_target_incline_changed(target_incline)
+            self._status_value = bytearray(status)
+            self._notify_characteristic(
+                FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID, self._status_value
+            )
+            LOGGER.info("Target incline changed: %.2f %%", target_incline)
+
+        # Update tracked values
+        self._last_target_speed = target_kph
+        self._last_target_incline = target_incline
 
     def _update_status(self, mode: object) -> None:
         """Update fitness machine status based on mode.
@@ -634,6 +741,8 @@ class FtmsBleRelay:
         self._supported_speed_range = bytearray(encode_supported_speed_range(self._ranges))
         self._supported_incline_range = bytearray(encode_supported_incline_range(self._ranges))
 
+    def _update_range_characteristics(self) -> None:
+        """Update range characteristic values after GATT initialization."""
         speed_range_char = self._server.get_characteristic(SUPPORTED_SPEED_RANGE_UUID)
         if speed_range_char is not None:
             speed_range_char.value = self._supported_speed_range
@@ -646,6 +755,8 @@ class FtmsBleRelay:
     def _encode_status_from_mode(mode: object) -> bytes | None:
         """Map iFit mode values to FTMS status messages."""
         if isinstance(mode, Mode):
+            if mode == Mode.MISSING_SAFETY_KEY:
+                return encode_status_safety_key()
             if mode in {Mode.ACTIVE, Mode.WARMUP}:
                 return encode_status_started()
             if mode in {Mode.PAUSE, Mode.SUMMARY, Mode.IDLE}:

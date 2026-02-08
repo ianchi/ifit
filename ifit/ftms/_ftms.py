@@ -75,7 +75,10 @@ class FitnessMachineStatus(IntEnum):
     """Fitness Machine Status opcodes used by the relay."""
 
     STOPPED_OR_PAUSED = 0x02
+    STOPPED_BY_SAFETY_KEY = 0x03
     STARTED_OR_RESUMED = 0x04
+    TARGET_SPEED_CHANGED = 0x05
+    TARGET_INCLINE_CHANGED = 0x06
 
 
 class FtmsRanges(BaseModel):
@@ -240,3 +243,34 @@ def encode_status_started() -> bytes:
 def encode_status_stopped() -> bytes:
     """Encode stopped/paused fitness machine status."""
     return pack("<B", FitnessMachineStatus.STOPPED_OR_PAUSED)
+
+
+def encode_status_safety_key() -> bytes:
+    """Encode stopped by safety key fitness machine status."""
+    return pack("<B", FitnessMachineStatus.STOPPED_BY_SAFETY_KEY)
+
+
+def encode_status_target_speed_changed(speed_kph: float) -> bytes:
+    """Encode target speed changed status with new target value.
+
+    Args:
+        speed_kph: New target speed in km/h
+
+    Returns:
+        Status notification: opcode (0x05) + UINT16 value (km/h * 100)
+    """
+    speed_raw = max(0, min(round(speed_kph * 100), 0xFFFF))
+    return pack("<BH", FitnessMachineStatus.TARGET_SPEED_CHANGED, speed_raw)
+
+
+def encode_status_target_incline_changed(incline_percent: float) -> bytes:
+    """Encode target incline changed status with new target value.
+
+    Args:
+        incline_percent: New target incline in percent
+
+    Returns:
+        Status notification: opcode (0x06) + SINT16 value (% * 10)
+    """
+    incline_raw = max(-32768, min(round(incline_percent * 10), 32767))
+    return pack("<Bh", FitnessMachineStatus.TARGET_INCLINE_CHANGED, incline_raw)
