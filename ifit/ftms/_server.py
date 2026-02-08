@@ -4,31 +4,17 @@ import asyncio
 import contextlib
 import logging
 import sys
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
+from dataclasses import dataclass
 from struct import unpack
-from typing import TYPE_CHECKING
+from typing import Self, TypeAlias
 
-# Try to import bless - optional dependency
-try:
-    from bless import (
-        BlessGATTCharacteristic,
-        BlessServer,
-        GATTAttributePermissions,
-        GATTCharacteristicProperties,
-    )
-
-    BLESS_AVAILABLE = True
-except ImportError:
-    BLESS_AVAILABLE = False
-    if TYPE_CHECKING:
-        # Type stubs for type checking when bless is not installed
-        from bless import (  # type: ignore[import-not-found]
-            BlessGATTCharacteristic,
-            BlessServer,
-            GATTAttributePermissions,
-            GATTCharacteristicProperties,
-        )
-
+from bless import (
+    BlessGATTCharacteristic,
+    BlessServer,
+    GATTAttributePermissions,
+    GATTCharacteristicProperties,
+)
 from pydantic import BaseModel, Field
 
 from ..client import IFitBleClient
@@ -68,8 +54,29 @@ from ._ftms import (
 
 LOGGER = logging.getLogger(__name__)
 
+# Type aliases for clarity
+CharacteristicUUID: TypeAlias = str
+ServiceUUID: TypeAlias = str
+
 # Control point message length constants
-MIN_TARGET_VALUE_LENGTH = 3
+CONTROL_POINT_MIN_LENGTH = 1  # Minimum opcode byte
+TARGET_VALUE_LENGTH = 3  # Opcode + 2-byte value
+
+# FTMS unknown value sentinels
+FTMS_UNKNOWN_UINT16 = 0xFFFF
+FTMS_UNKNOWN_SINT16 = 0x7FFF
+
+
+@dataclass
+class DeviceInformation:
+    """Device information for FTMS server."""
+
+    manufacturer: str = "iFit"
+    model: str = "FTMS Relay"
+    serial: str = "0000001"
+    firmware: str = "1.0.0"
+    hardware: str = "1.0"
+    software: str = "1.0.0"
 
 
 class FtmsConfig(BaseModel):
@@ -91,12 +98,6 @@ class FtmsBleRelay:
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         """Initialize relay state and BLE characteristics."""
-        if not BLESS_AVAILABLE:
-            msg = (
-                "FTMS server requires 'bless' library. Install with: poetry install --extras server"
-            )
-            raise RuntimeError(msg)
-
         self._client = client
         self._config = config
         self._ranges = ranges or FtmsRanges()
@@ -109,17 +110,18 @@ class FtmsBleRelay:
         self._feature_value = bytearray(self._build_feature_value())
         self._supported_speed_range = bytearray(encode_supported_speed_range(self._ranges))
         self._supported_incline_range = bytearray(encode_supported_incline_range(self._ranges))
+        self._device_info = DeviceInformation()
+
+        # Control point handlers dispatch dictionary
+        self._control_handlers: dict[ControlPointOpcode, Callable[[int, bytes], None]] = {
+            ControlPointOpcode.REQUEST_CONTROL: self._handle_request_control,
+            ControlPointOpcode.SET_TARGET_SPEED: self._handle_target_speed,
+            ControlPointOpcode.SET_TARGET_INCLINE: self._handle_target_incline,
+        }
         LOGGER.info(
             "Initialized FTMS relay for '%s' with update interval %.1fs",
             config.name,
             config.update_interval,
-        )
-        LOGGER.debug(
-            "Initial ranges: speed=%.1f-%.1f kph, incline=%.1f-%.1f%%",
-            self._ranges.min_kph,
-            self._ranges.max_kph,
-            self._ranges.min_incline,
-            self._ranges.max_incline,
         )
 
     async def start(self) -> None:
@@ -128,11 +130,11 @@ class FtmsBleRelay:
         await self._client.connect()
         LOGGER.info("Connected to iFit equipment")
 
-        LOGGER.debug("Initializing GATT services and characteristics...")
-        await self._init_gatt()
-
         LOGGER.debug("Updating ranges from equipment metadata...")
         self._update_ranges_from_equipment()
+
+        LOGGER.debug("Initializing GATT services and characteristics...")
+        await self._init_gatt()
 
         LOGGER.info("Starting BLE server '%s'...", self._config.name)
         # Configure advertisement to include FTMS service UUID
@@ -154,164 +156,174 @@ class FtmsBleRelay:
         await self._client.disconnect()
         LOGGER.info("FTMS server stopped")
 
+    async def __aenter__(self) -> Self:
+        """Start the relay server."""
+        await self.start()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """Stop the relay server."""
+        await self.stop()
+
     async def _init_gatt(self) -> None:
         """Register GATT characteristics and request handlers."""
-        # On Linux, add baseline GAP/GATT services (Windows provides these automatically)
+        # Build GATT structure
+        gatt_structure = self._build_ftms_gatt_structure()
+
+        # On Linux, add baseline GAP/GATT/Device Info services
+        # (Windows provides these automatically)
         if sys.platform == "linux":
-            # Add baseline GAP service (required by iOS)
-            await self._server.add_new_service(GAP_SERVICE_UUID)
-            await self._server.add_new_characteristic(
-                GAP_SERVICE_UUID,
-                DEVICE_NAME_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(self._config.name.encode("utf-8")),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                GAP_SERVICE_UUID,
-                APPEARANCE_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(APPEARANCE_TREADMILL.to_bytes(2, "little")),
-                GATTAttributePermissions.readable,
-            )
-            LOGGER.debug("Added GAP service with Device Name and Appearance")
-
-            # Add baseline GATT service (recommended for iOS)
-            await self._server.add_new_service(GATT_SERVICE_UUID)
-            await self._server.add_new_characteristic(
-                GATT_SERVICE_UUID,
-                SERVICE_CHANGED_UUID,
-                GATTCharacteristicProperties.indicate,
-                bytearray(4),  # Start and end handles (will be updated if service table changes)
-                GATTAttributePermissions.readable,
-            )
-            LOGGER.debug("Added GATT service with Service Changed")
-
-            # Add Device Information Service (expected by many fitness apps)
-            # On Linux, we can add this service; on Windows/macOS it's provided by OS
-            await self._server.add_new_service(DEVICE_INFORMATION_SERVICE_UUID)
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                MANUFACTURER_NAME_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"iFit"),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                MODEL_NUMBER_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"FTMS Relay"),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                SERIAL_NUMBER_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"0000001"),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                FIRMWARE_REVISION_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"1.0.0"),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                HARDWARE_REVISION_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"1.0"),
-                GATTAttributePermissions.readable,
-            )
-            await self._server.add_new_characteristic(
-                DEVICE_INFORMATION_SERVICE_UUID,
-                SOFTWARE_REVISION_UUID,
-                GATTCharacteristicProperties.read,
-                bytearray(b"1.0.0"),
-                GATTAttributePermissions.readable,
-            )
-            LOGGER.debug("Added Device Information Service")
+            gatt_structure.update(self._build_baseline_gatt_structure())
+            LOGGER.debug("Including GAP/GATT/Device Info services for Linux")
         else:
             LOGGER.debug(
                 "Skipping GAP/GATT/Device Info services on %s (provided by OS BLE stack)",
                 sys.platform,
             )
 
-        # Add FTMS service
-        await self._server.add_new_service(FTMS_SERVICE_UUID)
-        LOGGER.info("Added FTMS service: %s", FTMS_SERVICE_UUID)
-
-        # Add characteristics to the service
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            FITNESS_MACHINE_FEATURE_UUID,
-            GATTCharacteristicProperties.read,
-            self._feature_value,
-            GATTAttributePermissions.readable,
-        )
-        LOGGER.debug("Added characteristic: Fitness Machine Feature")
-
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            SUPPORTED_SPEED_RANGE_UUID,
-            GATTCharacteristicProperties.read,
-            self._supported_speed_range,
-            GATTAttributePermissions.readable,
-        )
-        LOGGER.debug("Added characteristic: Supported Speed Range")
-
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            SUPPORTED_INCLINE_RANGE_UUID,
-            GATTCharacteristicProperties.read,
-            self._supported_incline_range,
-            GATTAttributePermissions.readable,
-        )
-        LOGGER.debug("Added characteristic: Supported Incline Range")
-
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            TREADMILL_DATA_UUID,
-            GATTCharacteristicProperties.notify,
-            self._treadmill_value,
-            GATTAttributePermissions.readable,
-        )
-        LOGGER.debug("Added characteristic: Treadmill Data")
-
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            FITNESS_MACHINE_CONTROL_POINT_UUID,
-            GATTCharacteristicProperties.write | GATTCharacteristicProperties.indicate,
-            self._control_point_value,
-            GATTAttributePermissions.writeable,
-        )
-        LOGGER.debug("Added characteristic: Fitness Machine Control Point")
-
-        await self._server.add_new_characteristic(
-            FTMS_SERVICE_UUID,
-            FITNESS_MACHINE_STATUS_UUID,
-            GATTCharacteristicProperties.notify,
-            self._status_value,
-            GATTAttributePermissions.readable,
-        )
-        LOGGER.debug("Added characteristic: Fitness Machine Status")
+        # Add all services and characteristics at once
+        await self._server.add_gatt(gatt_structure)
+        LOGGER.info("Added all GATT services and characteristics")
 
         # Set up request handlers
         self._server.read_request_func = self._read_request
         self._server.write_request_func = self._write_request
         LOGGER.debug("Request handlers configured")
 
+    def _build_baseline_gatt_structure(self) -> dict[str, dict[str, dict[str, object]]]:
+        """Build baseline GAP/GATT/Device Info services structure for Linux.
+
+        Returns:
+            Dictionary mapping service UUIDs to their characteristics
+        """
+        return {
+            GAP_SERVICE_UUID: {
+                DEVICE_NAME_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._config.name.encode("utf-8")),
+                },
+                APPEARANCE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(APPEARANCE_TREADMILL.to_bytes(2, "little")),
+                },
+            },
+            GATT_SERVICE_UUID: {
+                SERVICE_CHANGED_UUID: {
+                    "Properties": GATTCharacteristicProperties.indicate,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(4),  # Start and end handles
+                },
+            },
+            DEVICE_INFORMATION_SERVICE_UUID: {
+                MANUFACTURER_NAME_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.manufacturer.encode("utf-8")),
+                },
+                MODEL_NUMBER_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.model.encode("utf-8")),
+                },
+                SERIAL_NUMBER_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.serial.encode("utf-8")),
+                },
+                FIRMWARE_REVISION_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.firmware.encode("utf-8")),
+                },
+                HARDWARE_REVISION_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.hardware.encode("utf-8")),
+                },
+                SOFTWARE_REVISION_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(self._device_info.software.encode("utf-8")),
+                },
+            },
+        }
+
+    def _build_ftms_gatt_structure(self) -> dict[str, dict[str, dict[str, object]]]:
+        """Build FTMS service GATT structure.
+
+        Returns:
+            Dictionary mapping FTMS service UUID to its characteristics
+        """
+        return {
+            FTMS_SERVICE_UUID: {
+                FITNESS_MACHINE_FEATURE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": self._feature_value,
+                },
+                SUPPORTED_SPEED_RANGE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": self._supported_speed_range,
+                },
+                SUPPORTED_INCLINE_RANGE_UUID: {
+                    "Properties": GATTCharacteristicProperties.read,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": self._supported_incline_range,
+                },
+                TREADMILL_DATA_UUID: {
+                    "Properties": GATTCharacteristicProperties.notify,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": self._treadmill_value,
+                },
+                FITNESS_MACHINE_CONTROL_POINT_UUID: {
+                    "Properties": (
+                        GATTCharacteristicProperties.write | GATTCharacteristicProperties.indicate
+                    ),
+                    "Permissions": GATTAttributePermissions.writeable,
+                    "Value": self._control_point_value,
+                },
+                FITNESS_MACHINE_STATUS_UUID: {
+                    "Properties": GATTCharacteristicProperties.notify,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": self._status_value,
+                },
+            },
+        }
+
     def _read_request(self, characteristic: BlessGATTCharacteristic, **kwargs) -> bytearray:
-        """Return the current cached value for the requested characteristic."""
+        """Return the current cached value for the requested characteristic.
+
+        Args:
+            characteristic: The characteristic being read
+            **kwargs: Additional arguments from bless
+
+        Returns:
+            The current value of the characteristic
+        """
         LOGGER.info("Read request on %s", characteristic.uuid)
         return bytearray(characteristic.value)
 
     def _write_request(
-        self, characteristic: BlessGATTCharacteristic, value: bytes, **kwargs
+        self,
+        characteristic: BlessGATTCharacteristic,
+        value: bytes,
+        **kwargs,  # type: ignore[no-untyped-def]
     ) -> None:
-        """Handle FTMS control point writes for speed/incline targets."""
+        """Handle FTMS control point writes for speed/incline targets.
+
+        Args:
+            characteristic: The characteristic being written to
+            value: The value being written
+            **kwargs: Additional arguments from bless
+        """
         LOGGER.info("Write request on %s: %s", characteristic.uuid, value.hex())
         if characteristic.uuid != FITNESS_MACHINE_CONTROL_POINT_UUID:
             return
@@ -324,31 +336,22 @@ class FtmsBleRelay:
 
         opcode = value[0]
         try:
-            try:
-                op = ControlPointOpcode(opcode)
-            except ValueError:
-                op = None
-            match op:
-                case ControlPointOpcode.REQUEST_CONTROL:
-                    # Always grant control to the FTMS client.
-                    LOGGER.info("Client requested control - granting")
-                    self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
-                case ControlPointOpcode.SET_TARGET_SPEED:
-                    self._handle_target_speed(opcode, value)
-                case ControlPointOpcode.SET_TARGET_INCLINE:
-                    self._handle_target_incline(opcode, value)
-                case ControlPointOpcode.START_OR_RESUME | ControlPointOpcode.STOP_OR_PAUSE:
-                    LOGGER.warning("Start/stop control not supported by IFitBleClient")
-                    self._send_control_point_response(
-                        opcode,
-                        result=ControlPointResult.OP_CODE_NOT_SUPPORTED,
-                    )
-                case _:
-                    LOGGER.warning("Unsupported control point opcode %s", opcode)
-                    self._send_control_point_response(
-                        opcode,
-                        result=ControlPointResult.OP_CODE_NOT_SUPPORTED,
-                    )
+            operation = ControlPointOpcode(opcode)
+            handler = self._control_handlers.get(operation)
+            if handler:
+                handler(opcode, value)
+            else:
+                LOGGER.warning("Unsupported control point opcode %s", operation.name)
+                self._send_control_point_response(
+                    opcode,
+                    result=ControlPointResult.OP_CODE_NOT_SUPPORTED,
+                )
+        except ValueError:
+            LOGGER.warning("Unknown control point opcode 0x%02x", opcode)
+            self._send_control_point_response(
+                opcode,
+                result=ControlPointResult.OP_CODE_NOT_SUPPORTED,
+            )
         except Exception:  # pragma: no cover - defensive guard
             LOGGER.exception("Control point handling failed")
             self._send_control_point_response(
@@ -356,65 +359,126 @@ class FtmsBleRelay:
                 result=ControlPointResult.OPERATION_FAILED,
             )
 
-    def _handle_target_speed(self, opcode: int, value: bytes) -> None:
-        """Parse a speed target request and forward it to the iFit client."""
-        if len(value) < MIN_TARGET_VALUE_LENGTH:
-            self._send_control_point_response(
-                opcode,
-                result=ControlPointResult.INVALID_PARAMETER,
-            )
-            return
-        (raw,) = unpack("<H", value[1:3])
-        kph = raw / 100
-        # Convert FTMS 0.01 km/h units to kph.
+    def _handle_request_control(self, opcode: int, _value: bytes) -> None:
+        """Handle REQUEST_CONTROL opcode.
 
-        # Validate against supported speed range
-        if not (self._ranges.min_kph <= kph <= self._ranges.max_kph):
-            LOGGER.warning(
-                "Target speed %.2f kph out of range [%.2f, %.2f], rejecting",
-                kph,
-                self._ranges.min_kph,
-                self._ranges.max_kph,
-            )
-            self._send_control_point_response(
-                opcode,
-                result=ControlPointResult.INVALID_PARAMETER,
-            )
-            return
-
-        LOGGER.info("Setting target speed to %.2f kph", kph)
-        self._schedule_task(self._client.write_characteristics({"Kph": kph}), "set_speed")
+        Args:
+            opcode: The control point opcode
+            _value: The full control point message (unused for this opcode)
+        """
+        LOGGER.info("Client requested control - granting")
         self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
+
+    def _handle_target_value(
+        self,
+        opcode: int,
+        value: bytes,
+        *,
+        is_signed: bool,
+        scale: float,
+        min_val: float,
+        max_val: float,
+        characteristic_name: str,
+        unit: str,
+    ) -> None:
+        """Generic handler for target speed/incline requests.
+
+        Args:
+            opcode: The control point opcode
+            value: The full control point message
+            is_signed: Whether the value is signed (incline) or unsigned (speed)
+            scale: Scale factor to convert from FTMS units to actual units
+            min_val: Minimum allowed value
+            max_val: Maximum allowed value
+            characteristic_name: Name of the iFit characteristic to write
+            unit: Unit string for logging (e.g., "kph", "%")
+        """
+        if len(value) < TARGET_VALUE_LENGTH:
+            self._send_control_point_response(
+                opcode,
+                result=ControlPointResult.INVALID_PARAMETER,
+            )
+            return
+
+        fmt = "<h" if is_signed else "<H"
+        (raw_value,) = unpack(fmt, value[1:3])
+        actual_value = raw_value / scale
+
+        if not (min_val <= actual_value <= max_val):
+            LOGGER.warning(
+                "Target %s %.2f %s out of range [%.2f, %.2f], rejecting",
+                characteristic_name.lower(),
+                actual_value,
+                unit,
+                min_val,
+                max_val,
+            )
+            self._send_control_point_response(
+                opcode,
+                result=ControlPointResult.INVALID_PARAMETER,
+            )
+            return
+
+        LOGGER.info("Setting target %s to %.2f %s", characteristic_name.lower(), actual_value, unit)
+        self._schedule_task(
+            self._client.write_characteristics({characteristic_name: actual_value}),
+            f"set_{characteristic_name.lower()}",
+        )
+        self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
+
+    def _handle_target_speed(self, opcode: int, value: bytes) -> None:
+        """Parse a speed target request and forward it to the iFit client.
+
+        Args:
+            opcode: The control point opcode
+            value: The full control point message
+        """
+        self._handle_target_value(
+            opcode,
+            value,
+            is_signed=False,
+            scale=100.0,
+            min_val=self._ranges.min_kph,
+            max_val=self._ranges.max_kph,
+            characteristic_name="Kph",
+            unit="kph",
+        )
 
     def _handle_target_incline(self, opcode: int, value: bytes) -> None:
-        """Parse an incline target request and forward it to the iFit client."""
-        if len(value) < MIN_TARGET_VALUE_LENGTH:
-            self._send_control_point_response(
-                opcode,
-                result=ControlPointResult.INVALID_PARAMETER,
-            )
-            return
-        (raw,) = unpack("<h", value[1:3])
-        incline = raw / 10
-        # Convert FTMS 0.1% units to incline percentage.
+        """Parse an incline target request and forward it to the iFit client.
 
-        # Validate against supported incline range
-        if not (self._ranges.min_incline <= incline <= self._ranges.max_incline):
-            LOGGER.warning(
-                "Target incline %.1f%% out of range [%.1f, %.1f], rejecting",
-                incline,
-                self._ranges.min_incline,
-                self._ranges.max_incline,
-            )
-            self._send_control_point_response(
-                opcode,
-                result=ControlPointResult.INVALID_PARAMETER,
-            )
-            return
+        Args:
+            opcode: The control point opcode
+            value: The full control point message
+        """
+        self._handle_target_value(
+            opcode,
+            value,
+            is_signed=True,
+            scale=10.0,
+            min_val=self._ranges.min_incline,
+            max_val=self._ranges.max_incline,
+            characteristic_name="Incline",
+            unit="%",
+        )
 
-        LOGGER.info("Setting target incline to %.1f%%", incline)
-        self._schedule_task(self._client.write_characteristics({"Incline": incline}), "set_incline")
-        self._send_control_point_response(opcode, result=ControlPointResult.SUCCESS)
+    def _notify_characteristic(
+        self, service_uuid: ServiceUUID, char_uuid: CharacteristicUUID, value: bytearray
+    ) -> None:
+        """Update a characteristic value and send notification/indication.
+
+        Args:
+            service_uuid: UUID of the service containing the characteristic
+            char_uuid: UUID of the characteristic to update
+            value: New value for the characteristic
+        """
+        characteristic = self._server.get_characteristic(char_uuid)
+        if characteristic:
+            characteristic.value = value
+            self._server.update_value(service_uuid, char_uuid)
+            LOGGER.debug("Sent notification for %s (%d bytes)", char_uuid, len(value))
+        else:
+            LOGGER.error("Characteristic %s not found", char_uuid)
 
     def _send_control_point_response(
         self,
@@ -422,21 +486,18 @@ class FtmsBleRelay:
         *,
         result: ControlPointResult,
     ) -> None:
-        """Send a control point response via indication."""
+        """Send a control point response via indication.
+
+        Args:
+            opcode: The original request opcode
+            result: The result code to send
+        """
         payload = bytearray(encode_control_point_response(opcode, result))
         self._control_point_value = payload
 
-        char = self._server.get_characteristic(FITNESS_MACHINE_CONTROL_POINT_UUID)
-        if char is None:
-            LOGGER.error("Control Point characteristic not found")
-            return
-
-        char.value = payload
-
         # Send indication immediately. Per FTMS spec, clients must enable indications
         # before writing to control point, so we assume they're subscribed.
-        # Note: On Windows, bless doesn't expose subscription state via subscribed_centrals
-        self._server.update_value(FTMS_SERVICE_UUID, FITNESS_MACHINE_CONTROL_POINT_UUID)
+        self._notify_characteristic(FTMS_SERVICE_UUID, FITNESS_MACHINE_CONTROL_POINT_UUID, payload)
         LOGGER.debug("Sent control point indication: opcode=0x%02x, result=%s", opcode, result.name)
 
         # If this is REQUEST_CONTROL with success, send initial treadmill data
@@ -445,38 +506,30 @@ class FtmsBleRelay:
             self._schedule_task(self._update_treadmill_data(), "initial_data_update")
 
     def _schedule_task(self, coro: Coroutine[object, object, None], label: str) -> None:
-        """Schedule a background task and log failures."""
+        """Schedule a background task and log failures.
+
+        Args:
+            coro: The coroutine to schedule
+            label: A descriptive label for logging
+        """
         LOGGER.debug("Scheduling background task: %s", label)
         task = self._loop.create_task(coro)
         task.add_done_callback(lambda t: self._log_task_exception(t, label))
 
     @staticmethod
     def _log_task_exception(task: asyncio.Future[None], label: str) -> None:
-        """Log exceptions from background tasks."""
+        """Log exceptions from background tasks.
+
+        Args:
+            task: The completed task
+            label: The descriptive label for the task
+        """
         if task.cancelled():
             LOGGER.debug("Background task %s was cancelled", label)
             return
         exc = task.exception()
         if exc:
             LOGGER.error("Background task %s failed: %s", label, exc, exc_info=exc)
-
-    def _is_subscribed(self, characteristic_uuid: str) -> bool:
-        """Check if any client has enabled notifications/indications for a characteristic."""
-        char = self._server.get_characteristic(characteristic_uuid)
-        if char is None:
-            LOGGER.debug(
-                "Characteristic %s not found when checking subscription", characteristic_uuid
-            )
-            return False
-        # Bless tracks subscribed centrals; check if any exist
-        subscribed_centrals = getattr(char, "subscribed_centrals", [])
-        LOGGER.debug(
-            "Subscription check for %s: subscribed_centrals=%s, has_attr=%s",
-            characteristic_uuid,
-            subscribed_centrals,
-            hasattr(char, "subscribed_centrals"),
-        )
-        return len(subscribed_centrals) > 0
 
     async def _notify_loop(self) -> None:
         """Continuously poll the iFit client and notify FTMS subscribers."""
@@ -486,11 +539,18 @@ class FtmsBleRelay:
 
     async def _update_treadmill_data(self) -> None:
         """Read iFit values and update FTMS treadmill/status characteristics."""
-        values = await self._client.read_characteristics(
-            ["Kph", "CurrentIncline", "Distance", "Pulse", "Mode"]
-        )
+        try:
+            values = await self._client.read_characteristics(
+                ["CurrentKph", "Kph", "CurrentIncline", "Incline", "Distance", "Pulse", "Mode"]
+            )
+        except Exception as e:  # noqa: BLE001  # Catch all connection/read errors
+            LOGGER.error("Failed to read iFit characteristics: %s", e)
+            return
+
         current_kph = float(values.get("CurrentKph", 0.0)) or float(values.get("Kph", 0.0))
-        current_incline = float(values.get("CurrentIncline", 0.0))
+        current_incline = float(values.get("CurrentIncline", 0.0)) or float(
+            values.get("Incline", 0.0)
+        )
         distance = float(values.get("Distance", 0.0))
         pulse_data = values.get("Pulse", {})
         heart_rate = int(pulse_data.get("pulse", 0)) if isinstance(pulse_data, dict) else 0
@@ -513,34 +573,35 @@ class FtmsBleRelay:
             heart_rate_bpm=heart_rate if heart_rate else None,
         )
 
-        # Update treadmill data and notify only if client is subscribed
-        treadmill_char = self._server.get_characteristic(TREADMILL_DATA_UUID)
-        if treadmill_char is not None:
-            treadmill_char.value = self._treadmill_value
-            # Always send notification - if no one is subscribed, it's ignored by BLE stack
-            self._server.update_value(FTMS_SERVICE_UUID, TREADMILL_DATA_UUID)
-            LOGGER.debug(
-                "Sent treadmill data notification (%d bytes): 0x%s",
-                len(self._treadmill_value),
-                self._treadmill_value.hex(),
-            )
+        # Update and notify treadmill data
+        self._notify_characteristic(FTMS_SERVICE_UUID, TREADMILL_DATA_UUID, self._treadmill_value)
 
-        # Update status if changed and notify only if client is subscribed
+        # Update status if changed
+        self._update_status(mode)
+
+    def _update_status(self, mode: object) -> None:
+        """Update fitness machine status based on mode.
+
+        Args:
+            mode: The current iFit mode
+        """
         status = self._encode_status_from_mode(mode)
-        if status and status != bytes(self._status_value):
-            self._status_value = bytearray(status)
-            status_char = self._server.get_characteristic(FITNESS_MACHINE_STATUS_UUID)
-            if status_char is not None:
-                status_char.value = self._status_value
-                # Always send notification - if no one is subscribed, it's ignored by BLE stack
-                self._server.update_value(FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID)
-                LOGGER.info("Sent status notification: mode=%s", mode)
+        if not status or status == bytes(self._status_value):
+            return
+
+        self._status_value = bytearray(status)
+        self._notify_characteristic(
+            FTMS_SERVICE_UUID, FITNESS_MACHINE_STATUS_UUID, self._status_value
+        )
+        LOGGER.info("Sent status notification: mode=%s", mode)
 
     @staticmethod
     def _build_feature_value() -> bytes:
         """Build the FTMS feature bitfield payload."""
         return encode_fitness_machine_feature(
             supports_inclination=True,
+            supports_heart_rate=True,
+            supports_total_distance=True,
             supports_speed_target=True,
             supports_incline_target=True,
         )

@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import IntEnum
 from struct import pack
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def bt16(uuid16: int) -> str:
@@ -88,17 +88,34 @@ class FtmsRanges(BaseModel):
     speed_increment: float = Field(default=0.1, gt=0.0)
     incline_increment: float = Field(default=0.5, gt=0.0)
 
+    @model_validator(mode="after")
+    def validate_ranges(self) -> FtmsRanges:
+        """Ensure min <= max for all ranges."""
+        if self.min_kph > self.max_kph:
+            msg = f"min_kph ({self.min_kph}) > max_kph ({self.max_kph})"
+            raise ValueError(msg)
+        if self.min_incline > self.max_incline:
+            msg = f"min_incline ({self.min_incline}) > max_incline ({self.max_incline})"
+            raise ValueError(msg)
+        return self
+
 
 def encode_fitness_machine_feature(
     *,
     supports_inclination: bool = True,
+    supports_total_distance: bool = True,
+    supports_heart_rate: bool = True,
     supports_speed_target: bool = True,
     supports_incline_target: bool = True,
 ) -> bytes:
     """Encode Fitness Machine Feature bitfields."""
     fitness_features = 0
+    if supports_total_distance:
+        fitness_features |= 1 << 2
     if supports_inclination:
         fitness_features |= 1 << 3
+    if supports_heart_rate:
+        fitness_features |= 1 << 10
 
     target_features = 0
     if supports_speed_target:
