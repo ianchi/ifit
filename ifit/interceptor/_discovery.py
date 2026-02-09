@@ -116,9 +116,6 @@ class ActivationCodeDiscovery:
         self._manufacturer_company_id: int | None = None
         self._manufacturer_data: bytes | None = None
 
-        # WinRT auxiliary advertiser for manufacturer data (Windows only)
-        self._winrt_publisher: object | None = None
-
     async def discover(self, timeout: float = 60.0) -> str:
         """Run the discovery process and return the activation code.
 
@@ -131,7 +128,29 @@ class ActivationCodeDiscovery:
         Raises:
             TimeoutError: If activation code not captured within timeout
             RuntimeError: If discovery fails
+            NotImplementedError: If running on Windows (not supported)
         """
+        # Check if running on Windows
+        if sys.platform == "win32":
+            raise NotImplementedError(
+                "\n"
+                "══════════════════════════════════════════════════════════════════════\n"
+                "  Activation Code Discovery is NOT supported on Windows\n"
+                "══════════════════════════════════════════════════════════════════════\n\n"
+                "REASON:\n"
+                "  Windows Bluetooth APIs do not support advertising both:\n"
+                "    • Service UUIDs (required for GATT server)\n"
+                "    • Manufacturer data (required to mimic iFit devices)\n\n"
+                "  Only ONE can be advertised at a time, making it impossible\n"
+                "  to create a proper peripheral that the iFit app will recognize.\n\n"
+                "SOLUTION:\n"
+                "  Use Linux or macOS for activation code discovery, or:\n"
+                "  1. Try codes from scripts/try_all_codes.py\n"
+                "  2. Ask in the community for known codes\n"
+                "  3. Use a Raspberry Pi or Linux VM for discovery\n\n"
+                "Sorry for the inconvenience. This is a Windows BLE API limitation.\n"
+            )
+
         print("\n=== iFit Activation Code Discovery ===\n")
 
         # Step 1: Find and connect to treadmill
@@ -320,7 +339,9 @@ class ActivationCodeDiscovery:
 
         Replicates the exact manufacturer data from the real iFit equipment
         so the peripheral appears identical to the manufacturer's app.
-        Supports cross-platform operation including WinRT on Windows.
+        Supports macOS (CoreBluetooth) and Linux (BlueZ).
+        
+        Note: Windows is not supported due to BLE API limitations.
         """
         if not self.server:
             return
@@ -334,13 +355,9 @@ class ActivationCodeDiscovery:
 
         try:
             # Access the platform-specific advertiser backend
-            # Bless uses different backends: WinRTBackend (Windows), CoreBluetoothBackend (macOS),
-            # BlueZBackend (Linux)
+            # Bless uses different backends: CoreBluetoothBackend (macOS), BlueZBackend (Linux)
             success = False
-            if sys.platform == "win32":
-                # Windows uses WinRT BLE APIs
-                success = await self._configure_winrt_advertisement()
-            elif sys.platform == "darwin":
+            if sys.platform == "darwin":
                 # macOS uses CoreBluetooth
                 success = await self._configure_corebluetooth_advertisement()
             else:
@@ -361,105 +378,7 @@ class ActivationCodeDiscovery:
             LOGGER.warning("Failed to configure manufacturer data in advertisement: %s", e)
             LOGGER.info("Continuing without manufacturer data replication")
 
-    async def _configure_winrt_advertisement(self) -> bool:
-        """Configure advertisement using Windows Runtime (WinRT) APIs.
 
-        Creates an auxiliary BluetoothLEAdvertisementPublisher to broadcast
-        manufacturer data. This is separate from Bless's GattServiceProvider
-        which handles the connectable GATT server but doesn't support
-        manufacturer data in its advertisements.
-
-        Returns:
-            True if manufacturer data was successfully configured, False otherwise
-        """
-        if not self.server or not self._manufacturer_data:
-            LOGGER.debug("WinRT: No server or manufacturer data available")
-            return False
-
-        if not self._manufacturer_company_id:
-            LOGGER.warning(
-                "No manufacturer company ID captured, cannot configure WinRT advertisement"
-            )
-            return False
-
-        try:
-            # Import WinRT advertisement APIs
-            # These are only available on Windows with the winrt package installed
-            LOGGER.debug("WinRT: Importing Windows.Devices.Bluetooth.Advertisement modules...")
-            from winrt.windows.devices.bluetooth.advertisement import (  # type: ignore[import-not-found, import-untyped]  # noqa: PLC0415
-                BluetoothLEAdvertisementPublisher,
-                BluetoothLEManufacturerData,
-            )
-            from winrt.windows.storage.streams import (  # type: ignore[import-not-found, import-untyped]  # noqa: PLC0415
-                DataWriter,
-            )
-
-            LOGGER.debug("WinRT: Creating advertisement publisher...")
-            # Create auxiliary advertisement publisher for manufacturer data
-            # This runs alongside Bless's GattServiceProvider
-            publisher = BluetoothLEAdvertisementPublisher()
-
-            # Create manufacturer data section
-            LOGGER.debug(
-                "WinRT: Creating manufacturer data (company_id=0x%04X, %d bytes)",
-                self._manufacturer_company_id,
-                len(self._manufacturer_data),
-            )
-            writer = DataWriter()
-            # write_bytes() expects bytes, not a list
-            writer.write_bytes(self._manufacturer_data)
-
-            # Manufacturer data format: company_id (2 bytes) + vendor-specific data
-            manufacturer_data_obj = BluetoothLEManufacturerData(
-                self._manufacturer_company_id,
-                writer.detach_buffer(),
-            )
-
-            # Add manufacturer data to the advertisement
-            LOGGER.debug("WinRT: Adding manufacturer data to advertisement...")
-            publisher.advertisement.manufacturer_data.append(manufacturer_data_obj)
-
-            # Start broadcasting the auxiliary advertisement
-            LOGGER.debug("WinRT: Starting advertisement publisher...")
-            publisher.start()
-
-            # Store reference for cleanup
-            self._winrt_publisher = publisher
-
-            # Check publisher status
-            try:
-                status = publisher.status
-                LOGGER.debug("WinRT: Publisher status: %s", status)
-            except Exception as e:
-                LOGGER.debug("WinRT: Could not read publisher status: %s", e)
-
-            print(
-                f"\n✓ Windows: Started manufacturer data advertisement "
-                f"(Company ID: 0x{self._manufacturer_company_id:04X})\n"
-            )
-            LOGGER.info(
-                "Started auxiliary WinRT manufacturer data publisher "
-                "(company ID: 0x%04X, data: %s)",
-                self._manufacturer_company_id,
-                self._manufacturer_data.hex(),
-            )
-            return True
-
-        except ImportError as e:
-            LOGGER.warning(
-                "WinRT modules not available: %s. "
-                "Install with: pip install winrt-Windows.Devices.Bluetooth.Advertisement",
-                e,
-            )
-            return False
-        except Exception as e:
-            LOGGER.exception(
-                "Failed to start WinRT manufacturer data publisher: %s (type: %s)",
-                e,
-                type(e).__name__,
-            )
-            print(f"\n⚠ Warning: Could not start Windows manufacturer data advertisement: {e}\n")
-            return False
 
     async def _configure_corebluetooth_advertisement(self) -> bool:
         """Configure advertisement using CoreBluetooth on macOS.
@@ -814,21 +733,10 @@ class ActivationCodeDiscovery:
     async def cleanup(self) -> None:
         """Clean up BLE resources.
 
-        Stops the peripheral server, auxiliary advertiser, and disconnects from the treadmill.
+        Stops the peripheral server and disconnects from the treadmill.
         Safe to call multiple times.
         """
         LOGGER.debug("Cleaning up discovery resources")
-
-        # Stop WinRT auxiliary publisher if it exists
-        if self._winrt_publisher is not None:
-            try:
-                # Stop the auxiliary manufacturer data advertisement
-                self._winrt_publisher.stop()  # type: ignore[attr-defined]
-                LOGGER.debug("Stopped WinRT auxiliary advertisement publisher")
-            except Exception as e:
-                LOGGER.warning("Error stopping WinRT publisher: %s", e)
-            finally:
-                self._winrt_publisher = None
 
         if self.server:
             try:

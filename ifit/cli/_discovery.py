@@ -52,6 +52,23 @@ async def scan_devices(args: argparse.Namespace) -> None:
 
 async def discover_activation_code(args: argparse.Namespace) -> None:
     """Discover activation code by intercepting manufacturer app."""
+    # Check if running on Windows
+    if sys.platform == "win32":
+        print("\n" + "=" * 70)
+        print("  Activation Code Discovery is NOT supported on Windows")
+        print("=" * 70)
+        print("\nREASON:")
+        print("  Windows Bluetooth APIs cannot advertise both service UUIDs")
+        print("  and manufacturer data simultaneously, which is required to")
+        print("  mimic iFit devices properly.")
+        print("\nALTERNATIVES:")
+        print("  1. Use Linux or macOS for discovery")
+        print("  2. Try scripts/try_all_codes.py to test common codes")
+        print("  3. Use a Raspberry Pi or Linux VM")
+        print("  4. Ask the community for known activation codes")
+        print("\nSorry for the inconvenience!\n")
+        sys.exit(1)
+    
     try:
         from ..interceptor import discover_activation_code as discover_code  # noqa: PLC0415
     except ImportError as e:
@@ -73,6 +90,10 @@ async def discover_activation_code(args: argparse.Namespace) -> None:
 
         print(f"Activation code saved to: {config_file}\n")
 
+    except NotImplementedError as e:
+        # Windows platform check - nice error message already included
+        print(str(e))
+        sys.exit(1)
     except ImportError as e:
         print(f"\n✗ Missing dependencies: {e}")
         print("Install with: pip install bless")
