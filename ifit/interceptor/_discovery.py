@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self, TypeAlias
 
 from .._scanner import find_ifit_device
 
@@ -52,6 +51,24 @@ if not TYPE_CHECKING:
         BLESS_AVAILABLE = False
 
 LOGGER = logging.getLogger(__name__)
+
+# Type aliases for clarity
+CharacteristicUUID: TypeAlias = str
+ServiceUUID: TypeAlias = str
+
+# Standard UUIDs as constants
+GAP_SERVICE_UUID = "00001800-0000-1000-8000-00805f9b34fb"
+GATT_SERVICE_UUID = "00001801-0000-1000-8000-00805f9b34fb"
+DEVICE_NAME_UUID = "00002a00-0000-1000-8000-00805f9b34fb"
+
+# Message parsing constants
+HEADER_INDEX = MessageIndex.HEADER
+EOF_INDEX = MessageIndex.EOF
+FIRST_PART_INDEX = 0x00
+COMMAND_OFFSET = 8
+DEVICE_OFFSET = 6
+FIRST_PART_CONTENT_START = 9
+CONTINUATION_CONTENT_START = 2
 
 # Message length threshold for EOF detection
 MIN_FINAL_MESSAGE_LENGTH = 20
@@ -89,17 +106,12 @@ class ActivationCodeDiscovery:
         # State for request/response handling
         self._current_request_buffer: bytearray | None = None
         self._current_request_length: int = -1
-        self._current_request_offset: int = 0
         self._current_command: int | None = None
         self._current_device: int = SportsEquipment.GENERAL
-        self._current_response: list[bytes] | None = None
-        self._current_response_index: int = 0
 
         # Treadmill metadata
         self._device_name: str | None = None
-        self._advertising_data: bytes | None = None
-        self._manufacturer_data: bytes | None = None
-        self._service_uuids: list[str] = []
+        self._peripheral_name: str | None = None
 
     async def discover(self, timeout: float = 60.0) -> str:
         """Run the discovery process and return the activation code.
@@ -160,169 +172,373 @@ class ActivationCodeDiscovery:
 
         return self.activation_code
 
+    async def __aenter__(self) -> Self:
+        """Start the discovery process as an async context manager."""
+        await self.discover()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object,
+    ) -> None:
+        """Clean up resources when exiting context."""
+        await self.cleanup()
+
     async def _find_treadmill(self) -> str:
-        """Scan for and return the treadmill address."""
+        """Scan for and return the treadmill address.
+
+        Returns:
+            The MAC address of the discovered treadmill
+
+        Raises:
+            TimeoutError: If no treadmill found within scan timeout
+        """
         device = await find_ifit_device(self.ble_code, timeout=20.0)
         return device.address
 
     async def _connect_to_treadmill(self) -> None:
-        """Connect to the real treadmill as a BLE central."""
+        """Connect to the real treadmill as a BLE central.
+
+        Establishes connection, discovers device metadata, and sets up
+        notification handlers for proxying responses back to the app.
+
+        Raises:
+            ValueError: If treadmill address not set
+            RuntimeError: If connection or setup fails
+        """
         if self.treadmill_address is None:
             raise ValueError("Treadmill address not set")
-        self.treadmill_client = BleakClient(self.treadmill_address)
-        await self.treadmill_client.connect()
 
-        # Discover services to get metadata
-        services = self.treadmill_client.services
-        self._service_uuids = [
-            s.uuid
-            for s in services
-            if s.uuid
-            not in ["00001800-0000-1000-8000-00805f9b34fb", "00001801-0000-1000-8000-00805f9b34fb"]
-        ]
-
-        # Get device name
         try:
-            device_name_char = self.treadmill_client.services.get_characteristic(
-                "00002a00-0000-1000-8000-00805f9b34fb"
-            )
+            self.treadmill_client = BleakClient(self.treadmill_address)
+            await self.treadmill_client.connect()
+            LOGGER.info("Connected to treadmill at %s", self.treadmill_address)
+        except Exception as e:
+            raise RuntimeError(f"Failed to connect to treadmill: {e}") from e
+
+        try:
+            await self._discover_treadmill_metadata()
+            await self._setup_treadmill_notifications()
+        except Exception as e:
+            await self.treadmill_client.disconnect()
+            raise RuntimeError(f"Failed to setup treadmill connection: {e}") from e
+
+    async def _discover_treadmill_metadata(self) -> None:
+        """Discover treadmill device name and build peripheral server name.
+
+        Reads the device name characteristic and creates a distinguishable
+        name for the peripheral server by appending "_SETUP" suffix.
+        """
+        if self.treadmill_client is None:
+            return
+
+        # Get device name from GAP service
+        try:
+            device_name_char = self.treadmill_client.services.get_characteristic(DEVICE_NAME_UUID)
             if device_name_char:
                 name_bytes = await self.treadmill_client.read_gatt_char(device_name_char)
                 self._device_name = name_bytes.decode("utf-8", errors="ignore")
+                LOGGER.debug("Read device name: %s", self._device_name)
         except Exception as e:
             LOGGER.debug("Could not read device name: %s", e)
 
         if not self._device_name:
             self._device_name = f"iFit-{self.ble_code}"
 
-        # Modify name for peripheral server so it's distinguishable
-        # Add a suffix to make it clear this is the proxy
+        # Add suffix to make peripheral server distinguishable from real treadmill
         self._peripheral_name = f"{self._device_name}_SETUP"
 
         LOGGER.info("Real treadmill name: %s", self._device_name)
         LOGGER.info("Peripheral server will advertise as: %s", self._peripheral_name)
 
-        # Build manufacturer data (iFit signature with BLE code)
-        # Format: vendor_id (2 bytes) + signature + code
-        self._manufacturer_data = bytes.fromhex(f"ffff00dd{self.ble_code_internal}")
+    async def _setup_treadmill_notifications(self) -> None:
+        """Enable notifications from treadmill RX characteristic for proxying.
 
-        # Setup RX/TX notifications for proxying
-        await self.treadmill_client.start_notify(
-            BLE_UUIDS["rx"],
-            self._handle_treadmill_notify,  # type: ignore[arg-type]
-        )
+        Raises:
+            RuntimeError: If notification setup fails
+        """
+        if self.treadmill_client is None:
+            raise RuntimeError("Treadmill client not initialized")
+
+        try:
+            await self.treadmill_client.start_notify(
+                BLE_UUIDS["rx"],
+                self._handle_treadmill_notify,  # type: ignore[arg-type]
+            )
+            LOGGER.debug("Enabled notifications on treadmill RX characteristic")
+        except Exception as e:
+            raise RuntimeError(f"Failed to enable treadmill notifications: {e}") from e
+
+    def _build_gatt_structure(
+        self,
+    ) -> dict[ServiceUUID, dict[CharacteristicUUID, dict[str, object]]]:
+        """Build iFit proxy service GATT structure.
+
+        Creates the service and characteristics needed to proxy communication
+        between the manufacturer's app and the real treadmill.
+
+        Returns:
+            Dictionary mapping service UUID to characteristics configuration
+        """
+        return {
+            BLE_UUIDS["service"]: {
+                BLE_UUIDS["tx"]: {
+                    "Properties": (
+                        GATTCharacteristicProperties.write
+                        | GATTCharacteristicProperties.write_without_response
+                    ),
+                    "Permissions": GATTAttributePermissions.writeable,
+                    "Value": bytearray(),
+                },
+                BLE_UUIDS["rx"]: {
+                    "Properties": GATTCharacteristicProperties.notify,
+                    "Permissions": GATTAttributePermissions.readable,
+                    "Value": bytearray(),
+                },
+            },
+        }
 
     async def _start_peripheral_server(self) -> None:
-        """Start a BLE peripheral server that mimics the treadmill."""
-        # Platform-specific BlessServer initialization
-        if sys.platform == "linux":
-            loop = asyncio.get_event_loop()
-            self.server = BlessServer(name=self._peripheral_name, loop=loop)
-        else:
+        """Start a BLE peripheral server that mimics the treadmill.
+
+        Initializes BlessServer, adds GATT structure, and starts advertising
+        to allow the manufacturer's app to connect.
+
+        Raises:
+            RuntimeError: If server initialization fails
+        """
+        if self._peripheral_name is None:
+            raise RuntimeError("Peripheral name not set")
+
+        try:
+            # Unified BlessServer initialization (name_overwrite works on all platforms)
             self.server = BlessServer(name=self._peripheral_name, name_overwrite=True)
+            LOGGER.debug("Initialized BlessServer with name: %s", self._peripheral_name)
 
-        # Add the main iFit service with TX/RX characteristics
-        await self.server.add_new_service(BLE_UUIDS["service"])  # type: ignore[union-attr]
+            # Build and add GATT structure
+            gatt_structure = self._build_gatt_structure()
+            await self.server.add_gatt(gatt_structure)
+            LOGGER.debug("Added iFit service and characteristics")
 
-        # Add TX characteristic (app writes to this, we read)
-        await self.server.add_new_characteristic(  # type: ignore[union-attr]
-            BLE_UUIDS["service"],
-            BLE_UUIDS["tx"],
-            GATTCharacteristicProperties.write
-            | GATTCharacteristicProperties.write_without_response,
-            None,
-            GATTAttributePermissions.writeable,
-        )
+            # Set write request handler
+            self.server.write_request_func = self._handle_app_write
+            LOGGER.debug("Configured write request handler")
 
-        # Add RX characteristic (we notify app from this)
-        await self.server.add_new_characteristic(  # type: ignore[union-attr]
-            BLE_UUIDS["service"],
-            BLE_UUIDS["rx"],
-            GATTCharacteristicProperties.notify,
-            None,
-            GATTAttributePermissions.readable,
-        )
-
-        # Set write handler for TX characteristic
-        self.server.get_characteristic(BLE_UUIDS["tx"]).write_callback = self._handle_app_write  # type: ignore[union-attr]
-
-        # Update advertising data to match treadmill
-        # This will advertise with manufacturer data containing the BLE code
-        await self.server.start()  # type: ignore[union-attr]
+            # Start server and begin advertising
+            await self.server.start()
+            LOGGER.info("BLE peripheral server started as '%s'", self._peripheral_name)
+        except Exception as e:
+            raise RuntimeError(f"Failed to start peripheral server: {e}") from e
 
     async def _handle_app_write(
-        self, _characteristic: BlessGATTCharacteristic, value: bytes
+        self,
+        characteristic: BlessGATTCharacteristic,
+        value: bytes,
+        **kwargs,  # type: ignore[no-untyped-def]
     ) -> None:
-        """Handle write from manufacturer's app."""
-        LOGGER.debug("App wrote: %s", value.hex())
+        """Handle write from manufacturer's app.
 
-        buffer = bytearray(value)
+        Processes incoming BLE messages from the manufacturer's app,
+        reassembles fragmented messages, and forwards complete requests
+        to the treadmill.
+
+        Args:
+            characteristic: The characteristic being written to
+            value: The data written by the app
+            **kwargs: Additional arguments from bless
+        """
+        LOGGER.debug("App wrote to %s: %s", characteristic.uuid, value.hex())
+
+        if characteristic.uuid != BLE_UUIDS["tx"]:
+            LOGGER.warning("Unexpected write to characteristic %s", characteristic.uuid)
+            return
+
+        try:
+            buffer = bytearray(value)
+            self._process_message_fragment(buffer)
+
+            # Check if message is complete
+            if self._is_complete_message(buffer[0], len(buffer)):
+                await self._process_complete_request()
+        except Exception as e:
+            LOGGER.exception("Failed to process app write: %s", e)
+
+    def _process_message_fragment(self, buffer: bytearray) -> None:
+        """Process a single BLE message fragment.
+
+        Handles different message types: headers, first parts, continuations,
+        and accumulates payload data for reassembly.
+
+        Args:
+            buffer: Message fragment data
+        """
+        index = buffer[0]
 
         # Parse message framing
-        if buffer[0] == MessageIndex.HEADER:
+        if index == HEADER_INDEX:
             self._current_request_length = buffer[2]
-            self._current_request_buffer = None
-            self._current_request_offset = 0
+            self._current_request_buffer = bytearray()
+            LOGGER.debug("Received header, expecting %d bytes", self._current_request_length)
+            return
 
-        if buffer[0] == 0x00:  # First part after header
-            self._current_command = buffer[8]
-            self._current_device = buffer[6]
-
-        # Accumulate request buffer
-        if buffer[0] != MessageIndex.HEADER and buffer[0] != 0x00:
+        if index == FIRST_PART_INDEX:
+            # First part contains command and device info
+            self._current_command = buffer[COMMAND_OFFSET]
+            self._current_device = buffer[DEVICE_OFFSET]
+            # Extract payload from first part
+            content_length = buffer[1]
+            content = buffer[FIRST_PART_CONTENT_START : FIRST_PART_CONTENT_START + content_length]
             if self._current_request_buffer is None:
                 self._current_request_buffer = bytearray()
-
-            # Copy payload data
-            content_start = 9 if buffer[0] == 0x00 else 2
-            content_length = buffer[1] if buffer[0] != 0x00 else len(buffer) - 9
-            self._current_request_buffer.extend(
-                buffer[content_start : content_start + content_length]
+            self._current_request_buffer.extend(content)
+            LOGGER.debug(
+                "First part: cmd=0x%02x, device=%d, content=%d bytes",
+                self._current_command,
+                self._current_device,
+                content_length,
             )
+        elif index == EOF_INDEX:
+            # EOF marker may contain command if not previously set
+            if not self._current_command and len(buffer) > COMMAND_OFFSET:
+                self._current_command = buffer[COMMAND_OFFSET]
+        else:
+            # Continuation message
+            if self._current_request_buffer is None:
+                LOGGER.warning("Continuation message without header, discarding")
+                return
+            content_length = buffer[1]
+            content = buffer[
+                CONTINUATION_CONTENT_START : CONTINUATION_CONTENT_START + content_length
+            ]
+            self._current_request_buffer.extend(content)
+            LOGGER.debug("Continuation: %d bytes", content_length)
 
-        # Check if this is the final message
-        is_eof = buffer[0] == MessageIndex.EOF
-        is_short_zero = buffer[0] == 0x00 and len(buffer) < MIN_FINAL_MESSAGE_LENGTH
-        if is_eof or is_short_zero:
-            if buffer[0] == MessageIndex.EOF and not self._current_command:
-                self._current_command = buffer[8]
+    def _is_complete_message(self, index: int, length: int) -> bool:
+        """Check if we have received a complete message.
 
-            await self._process_complete_request()
+        Args:
+            index: Message index byte
+            length: Length of current fragment
+
+        Returns:
+            True if message is complete and ready to process
+        """
+        return index == EOF_INDEX or (
+            index == FIRST_PART_INDEX and length < MIN_FINAL_MESSAGE_LENGTH
+        )
 
     async def _process_complete_request(self) -> None:
-        """Process a complete request from the app."""
+        """Process a complete request from the app and forward to treadmill.
+
+        This method is called when a complete message has been received from
+        the manufacturer's app. It extracts the activation code if this is
+        an ENABLE command, then forwards the request to the real treadmill.
+
+        The request is reconstructed using the protocol's build_request()
+        function and split into write messages appropriate for BLE MTU.
+        """
+        if self._current_command is None:
+            LOGGER.warning("Complete request without command, discarding")
+            self._reset_request_state()
+            return
+
         payload = bytes(self._current_request_buffer) if self._current_request_buffer else b""
 
-        # Check if this is the Enable command
+        LOGGER.info(
+            "Processing complete request: cmd=0x%02x, device=%d, payload=%d bytes",
+            self._current_command,
+            self._current_device,
+            len(payload),
+        )
+
+        # Check if this is the Enable command and capture activation code
         if self._current_command == Command.ENABLE:
             self.activation_code = payload.hex()
             print(f"\n✓ Captured activation code: {self.activation_code}")
             print("\nYou can now close the manufacturer's app.")
             print("Discovery will complete shortly...\n")
+            LOGGER.info("Activation code captured: %s", self.activation_code)
 
         # Forward request to real treadmill
         request = build_request(
             SportsEquipment(self._current_device), Command(self._current_command), payload
         )
+        await self._forward_to_treadmill(request)
 
-        # Send to treadmill TX characteristic
-        for chunk in build_write_messages(request):
-            await self.treadmill_client.write_gatt_char(  # type: ignore[union-attr]
-                BLE_UUIDS["tx"], chunk, response=False
-            )
+        # Reset request state for next message
+        self._reset_request_state()
 
-        # Reset request state
+    def _reset_request_state(self) -> None:
+        """Reset request parsing state for next message."""
         self._current_request_buffer = None
         self._current_command = None
+        self._current_device = SportsEquipment.GENERAL
+
+    async def _forward_to_treadmill(self, request: bytes) -> None:
+        """Forward a complete request to the treadmill.
+
+        Splits the request into appropriately-sized BLE write messages
+        and sends them to the treadmill TX characteristic.
+
+        Args:
+            request: Complete request message to forward
+
+        Raises:
+            RuntimeError: If treadmill client not connected
+        """
+        if not self.treadmill_client:
+            raise RuntimeError("Treadmill client not connected")
+
+        try:
+            chunks = list(build_write_messages(request))
+            LOGGER.debug("Forwarding request to treadmill: %d chunks", len(chunks))
+            for chunk in chunks:
+                await self.treadmill_client.write_gatt_char(BLE_UUIDS["tx"], chunk, response=False)
+            LOGGER.debug("Successfully forwarded %d-byte request", len(request))
+        except Exception as e:
+            LOGGER.error("Failed to forward request to treadmill: %s", e)
+            raise
+
+    def _notify_app(self, char_uuid: CharacteristicUUID, value: bytes) -> None:
+        """Send notification to connected manufacturer's app.
+
+        Updates the characteristic value and triggers a BLE notification
+        to any subscribed clients (the manufacturer's app).
+
+        Args:
+            char_uuid: UUID of characteristic to notify
+            value: Value to send in notification
+        """
+        if not self.server:
+            LOGGER.warning("Server not initialized, cannot send notification")
+            return
+
+        characteristic = self.server.get_characteristic(char_uuid)
+        if characteristic:
+            characteristic.value = bytearray(value)
+            self.server.update_value(BLE_UUIDS["service"], char_uuid)
+            LOGGER.debug(
+                "Sent notification to app on %s (%d bytes)",
+                char_uuid,
+                len(value),
+            )
+        else:
+            LOGGER.error("Characteristic %s not found", char_uuid)
 
     async def _handle_treadmill_notify(self, _sender: int, data: bytes) -> None:
-        """Handle notification from treadmill and forward to app."""
-        LOGGER.debug("Treadmill notified: %s", data.hex())
+        """Handle notification from treadmill and forward to app.
 
-        # Forward response back to the app
-        if self.server:
-            self.server.get_characteristic(BLE_UUIDS["rx"]).value = bytearray(data)  # type: ignore[union-attr]
-            self.server.update_value(BLE_UUIDS["service"], BLE_UUIDS["rx"])  # type: ignore[union-attr]
+        Receives responses from the real treadmill and proxies them back
+        to the manufacturer's app via BLE notifications.
+
+        Args:
+            _sender: BLE sender identifier (unused)
+            data: Response data from treadmill
+        """
+        LOGGER.debug("Treadmill notified: %s", data.hex())
+        self._notify_app(BLE_UUIDS["rx"], data)
 
     async def _wait_for_activation_code(self) -> None:
         """Wait until activation code is captured."""
@@ -330,12 +546,26 @@ class ActivationCodeDiscovery:
             await asyncio.sleep(0.5)
 
     async def cleanup(self) -> None:
-        """Clean up resources."""
+        """Clean up BLE resources.
+
+        Stops the peripheral server and disconnects from the treadmill.
+        Safe to call multiple times.
+        """
+        LOGGER.debug("Cleaning up discovery resources")
+
         if self.server:
-            await self.server.stop()
+            try:
+                await self.server.stop()
+                LOGGER.debug("Stopped peripheral server")
+            except Exception as e:
+                LOGGER.warning("Error stopping server: %s", e)
 
         if self.treadmill_client and self.treadmill_client.is_connected:
-            await self.treadmill_client.disconnect()
+            try:
+                await self.treadmill_client.disconnect()
+                LOGGER.debug("Disconnected from treadmill")
+            except Exception as e:
+                LOGGER.warning("Error disconnecting from treadmill: %s", e)
 
 
 async def discover_activation_code(
