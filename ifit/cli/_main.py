@@ -22,8 +22,8 @@ def _parse_args() -> argparse.Namespace:
         epilog="""
 Workflow:
   1. Scan for devices:        ifit scan
-  2. Find activation code:        ifit activate ADDRESS
-  3. Use the device:           ifit set ADDRESS CODE Kph=5.0
+  2. Find activation code:    ifit activate ADDRESS  (or discover-activation)
+  3. Use the device:          ifit set ADDRESS CODE Kph=5.0
 
 Examples:
   # Discovery - Find devices
@@ -33,6 +33,11 @@ Examples:
   # Activation - Get activation code
   ifit activate AA:BB:CC:DD:EE:FF              # Auto-discover activation code
   ifit activate AA:BB:CC:DD:EE:FF --max-attempts 10
+
+  # Activation - Intercept from manufacturer app (advanced)
+  ifit discover-activation 1a2b                # Intercept activation code
+  ifit discover-activation 1a2b --address AA:BB:CC:DD:EE:FF
+  ifit discover-activation 1a2b --timeout 120
 
   # Information
   ifit info AA:BB:CC:DD:EE:FF [CODE]             # Show device info

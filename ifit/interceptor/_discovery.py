@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import TYPE_CHECKING, Self, TypeAlias
 
 from .._scanner import find_ifit_device
@@ -112,6 +113,11 @@ class ActivationCodeDiscovery:
         # Treadmill metadata
         self._device_name: str | None = None
         self._peripheral_name: str | None = None
+        self._manufacturer_company_id: int | None = None
+        self._manufacturer_data: bytes | None = None
+
+        # WinRT auxiliary advertiser for manufacturer data (Windows only)
+        self._winrt_publisher: object | None = None
 
     async def discover(self, timeout: float = 60.0) -> str:
         """Run the discovery process and return the activation code.
@@ -189,6 +195,8 @@ class ActivationCodeDiscovery:
     async def _find_treadmill(self) -> str:
         """Scan for and return the treadmill address.
 
+        Also captures manufacturer data for later use in advertisement.
+
         Returns:
             The MAC address of the discovered treadmill
 
@@ -196,6 +204,13 @@ class ActivationCodeDiscovery:
             TimeoutError: If no treadmill found within scan timeout
         """
         device = await find_ifit_device(self.ble_code, timeout=20.0)
+        self._manufacturer_data = device.manufacturer_data
+        self._manufacturer_company_id = device.manufacturer_company_id
+        LOGGER.info(
+            "Captured manufacturer data from device: company_id=0x%04X, data=%s",
+            self._manufacturer_company_id if self._manufacturer_company_id else 0,
+            self._manufacturer_data.hex() if self._manufacturer_data else "None",
+        )
         return device.address
 
     async def _connect_to_treadmill(self) -> None:
@@ -300,6 +315,251 @@ class ActivationCodeDiscovery:
             },
         }
 
+    async def _configure_advertisement(self) -> None:
+        """Configure BLE advertisement with manufacturer data from source device.
+
+        Replicates the exact manufacturer data from the real iFit equipment
+        so the peripheral appears identical to the manufacturer's app.
+        Supports cross-platform operation including WinRT on Windows.
+        """
+        if not self.server:
+            return
+
+        if not self._manufacturer_data:
+            LOGGER.warning(
+                "No manufacturer data captured from source device, "
+                "advertisement may not match exactly"
+            )
+            return
+
+        try:
+            # Access the platform-specific advertiser backend
+            # Bless uses different backends: WinRTBackend (Windows), CoreBluetoothBackend (macOS),
+            # BlueZBackend (Linux)
+            success = False
+            if sys.platform == "win32":
+                # Windows uses WinRT BLE APIs
+                success = await self._configure_winrt_advertisement()
+            elif sys.platform == "darwin":
+                # macOS uses CoreBluetooth
+                success = await self._configure_corebluetooth_advertisement()
+            else:
+                # Linux uses BlueZ
+                success = await self._configure_bluez_advertisement()
+
+            if success:
+                LOGGER.info(
+                    "Configured advertisement with manufacturer data: %s",
+                    self._manufacturer_data.hex(),
+                )
+            else:
+                LOGGER.warning(
+                    "Manufacturer data configuration not fully supported on this platform. "
+                    "The peripheral will advertise with default settings."
+                )
+        except Exception as e:
+            LOGGER.warning("Failed to configure manufacturer data in advertisement: %s", e)
+            LOGGER.info("Continuing without manufacturer data replication")
+
+    async def _configure_winrt_advertisement(self) -> bool:
+        """Configure advertisement using Windows Runtime (WinRT) APIs.
+
+        Creates an auxiliary BluetoothLEAdvertisementPublisher to broadcast
+        manufacturer data. This is separate from Bless's GattServiceProvider
+        which handles the connectable GATT server but doesn't support
+        manufacturer data in its advertisements.
+
+        Returns:
+            True if manufacturer data was successfully configured, False otherwise
+        """
+        if not self.server or not self._manufacturer_data:
+            LOGGER.debug("WinRT: No server or manufacturer data available")
+            return False
+
+        if not self._manufacturer_company_id:
+            LOGGER.warning(
+                "No manufacturer company ID captured, cannot configure WinRT advertisement"
+            )
+            return False
+
+        try:
+            # Import WinRT advertisement APIs
+            # These are only available on Windows with the winrt package installed
+            LOGGER.debug("WinRT: Importing Windows.Devices.Bluetooth.Advertisement modules...")
+            from winrt.windows.devices.bluetooth.advertisement import (  # type: ignore[import-not-found, import-untyped]  # noqa: PLC0415
+                BluetoothLEAdvertisementPublisher,
+                BluetoothLEManufacturerData,
+            )
+            from winrt.windows.storage.streams import (  # type: ignore[import-not-found, import-untyped]  # noqa: PLC0415
+                DataWriter,
+            )
+
+            LOGGER.debug("WinRT: Creating advertisement publisher...")
+            # Create auxiliary advertisement publisher for manufacturer data
+            # This runs alongside Bless's GattServiceProvider
+            publisher = BluetoothLEAdvertisementPublisher()
+
+            # Create manufacturer data section
+            LOGGER.debug(
+                "WinRT: Creating manufacturer data (company_id=0x%04X, %d bytes)",
+                self._manufacturer_company_id,
+                len(self._manufacturer_data),
+            )
+            writer = DataWriter()
+            # write_bytes() expects bytes, not a list
+            writer.write_bytes(self._manufacturer_data)
+
+            # Manufacturer data format: company_id (2 bytes) + vendor-specific data
+            manufacturer_data_obj = BluetoothLEManufacturerData(
+                self._manufacturer_company_id,
+                writer.detach_buffer(),
+            )
+
+            # Add manufacturer data to the advertisement
+            LOGGER.debug("WinRT: Adding manufacturer data to advertisement...")
+            publisher.advertisement.manufacturer_data.append(manufacturer_data_obj)
+
+            # Start broadcasting the auxiliary advertisement
+            LOGGER.debug("WinRT: Starting advertisement publisher...")
+            publisher.start()
+
+            # Store reference for cleanup
+            self._winrt_publisher = publisher
+
+            # Check publisher status
+            try:
+                status = publisher.status
+                LOGGER.debug("WinRT: Publisher status: %s", status)
+            except Exception as e:
+                LOGGER.debug("WinRT: Could not read publisher status: %s", e)
+
+            print(
+                f"\n✓ Windows: Started manufacturer data advertisement "
+                f"(Company ID: 0x{self._manufacturer_company_id:04X})\n"
+            )
+            LOGGER.info(
+                "Started auxiliary WinRT manufacturer data publisher "
+                "(company ID: 0x%04X, data: %s)",
+                self._manufacturer_company_id,
+                self._manufacturer_data.hex(),
+            )
+            return True
+
+        except ImportError as e:
+            LOGGER.warning(
+                "WinRT modules not available: %s. "
+                "Install with: pip install winrt-Windows.Devices.Bluetooth.Advertisement",
+                e,
+            )
+            return False
+        except Exception as e:
+            LOGGER.exception(
+                "Failed to start WinRT manufacturer data publisher: %s (type: %s)",
+                e,
+                type(e).__name__,
+            )
+            print(f"\n⚠ Warning: Could not start Windows manufacturer data advertisement: {e}\n")
+            return False
+
+    async def _configure_corebluetooth_advertisement(self) -> bool:
+        """Configure advertisement using CoreBluetooth on macOS.
+
+        Returns:
+            True if manufacturer data was successfully configured, False otherwise
+        """
+        if not self.server or not self._manufacturer_data:
+            return False
+
+        # Try to access the Bless CoreBluetooth backend
+        if not hasattr(self.server, "app"):
+            LOGGER.debug("Bless server doesn't have 'app' backend attribute")
+            return False
+
+        backend = self.server.app
+
+        # CoreBluetooth uses CBPeripheralManager for advertising
+        # The advertisement data dictionary can include manufacturer data
+        # Key: CBAdvertisementDataManufacturerDataKey
+        # However, Bless may not expose this directly
+
+        # Try to set manufacturer data in the advertisement dictionary
+        if not hasattr(backend, "advertisement_data"):
+            return False
+
+        # Import CoreBluetooth constants
+        try:
+            from CoreBluetooth import (  # type: ignore[import-not-found]  # noqa: PLC0415
+                CBAdvertisementDataManufacturerDataKey,
+            )
+
+            # Set manufacturer data
+            backend.advertisement_data[CBAdvertisementDataManufacturerDataKey] = (  # type: ignore[attr-defined]
+                self._manufacturer_data
+            )
+            LOGGER.info("Successfully configured CoreBluetooth manufacturer data")
+            return True
+        except ImportError:
+            LOGGER.debug("CoreBluetooth modules not available")
+            return False
+        except Exception as e:
+            LOGGER.debug("CoreBluetooth advertisement configuration failed: %s", e)
+            return False
+
+    async def _configure_bluez_advertisement(self) -> bool:  # noqa: PLR0911
+        """Configure advertisement using BlueZ on Linux.
+
+        Returns:
+            True if manufacturer data was successfully configured, False otherwise
+        """
+        if not self.server or not self._manufacturer_data:
+            return False
+
+        try:
+            # Try to access the Bless BlueZ backend
+            if not hasattr(self.server, "app"):
+                LOGGER.debug("Bless server doesn't have 'app' backend attribute")
+                return False
+
+            backend = self.server.app
+
+            # BlueZ uses DBus for BLE operations
+            # The advertisement is configured through org.bluez.LEAdvertisement1 interface
+            # Manufacturer data is a dict where key is the company ID (uint16) and value is bytes
+
+            # Try to access the advertisement object
+            if not (hasattr(backend, "advertisement") and backend.advertisement):  # type: ignore[attr-defined]
+                return False
+
+            adv = backend.advertisement  # type: ignore[attr-defined]
+
+            # Set manufacturer data on the advertisement
+            # The format should be: {company_id: [byte, byte, ...]}
+            # Use the captured company ID or fallback
+            company_id = self._manufacturer_company_id or 0xFFFF
+
+            if hasattr(adv, "manufacturer_data"):
+                # Set as a dict with company ID as key
+                adv.manufacturer_data = {company_id: list(self._manufacturer_data)}
+                LOGGER.info(
+                    "Successfully configured BlueZ manufacturer data with company ID 0x%04X",
+                    company_id,
+                )
+                return True
+            if hasattr(adv, "ManufacturerData"):
+                # Alternative property name
+                adv.ManufacturerData = {company_id: list(self._manufacturer_data)}
+                LOGGER.info(
+                    "Successfully configured BlueZ manufacturer data with company ID 0x%04X",
+                    company_id,
+                )
+                return True
+
+            return False
+
+        except Exception as e:
+            LOGGER.debug("BlueZ advertisement configuration failed: %s", e)
+            return False
+
     async def _start_peripheral_server(self) -> None:
         """Start a BLE peripheral server that mimics the treadmill.
 
@@ -326,9 +586,15 @@ class ActivationCodeDiscovery:
             self.server.write_request_func = self._handle_app_write
             LOGGER.debug("Configured write request handler")
 
+            # Configure advertisement with manufacturer data AFTER server starts
+            # This ensures the GATT server is running before we add the auxiliary advertiser
+            await self._configure_advertisement()
+            await asyncio.sleep(60)  # Ensure advertisement is set up before starting server
+            LOGGER.debug("Advertisement configured, starting server...")
             # Start server and begin advertising
             await self.server.start()
             LOGGER.info("BLE peripheral server started as '%s'", self._peripheral_name)
+
         except Exception as e:
             raise RuntimeError(f"Failed to start peripheral server: {e}") from e
 
@@ -548,10 +814,21 @@ class ActivationCodeDiscovery:
     async def cleanup(self) -> None:
         """Clean up BLE resources.
 
-        Stops the peripheral server and disconnects from the treadmill.
+        Stops the peripheral server, auxiliary advertiser, and disconnects from the treadmill.
         Safe to call multiple times.
         """
         LOGGER.debug("Cleaning up discovery resources")
+
+        # Stop WinRT auxiliary publisher if it exists
+        if self._winrt_publisher is not None:
+            try:
+                # Stop the auxiliary manufacturer data advertisement
+                self._winrt_publisher.stop()  # type: ignore[attr-defined]
+                LOGGER.debug("Stopped WinRT auxiliary advertisement publisher")
+            except Exception as e:
+                LOGGER.warning("Error stopping WinRT publisher: %s", e)
+            finally:
+                self._winrt_publisher = None
 
         if self.server:
             try:

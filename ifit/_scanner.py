@@ -13,6 +13,7 @@ class IFitDevice:
     name: str | None
     manufacturer_data: bytes
     code: str
+    manufacturer_company_id: int | None = None
 
 
 def _normalize_ble_code(code: str) -> str:
@@ -48,13 +49,14 @@ async def find_ifit_device(code: str, timeout: float = 10.0) -> IFitDevice:
     for device, adv_data in devices.values():
         if not adv_data.manufacturer_data:
             continue
-        for payload in adv_data.manufacturer_data.values():
+        for company_id, payload in adv_data.manufacturer_data.items():
             if payload.endswith(suffix):
                 return IFitDevice(
                     address=device.address,
                     name=device.name,
                     manufacturer_data=payload,
                     code=_extract_displayed_code(payload),
+                    manufacturer_company_id=company_id,
                 )
 
     raise TimeoutError("No iFit device found with the provided BLE code")
@@ -70,7 +72,7 @@ async def find_all_ifit_devices(timeout: float = 10.0) -> list[IFitDevice]:
             continue
 
         # Look for iFit manufacturer data pattern (ends with 'dd' + 4-char hex code)
-        for payload in adv_data.manufacturer_data.values():
+        for company_id, payload in adv_data.manufacturer_data.items():
             if len(payload) >= 3 and payload[-3] == 0xDD:
                 ifit_devices.append(
                     IFitDevice(
@@ -78,6 +80,7 @@ async def find_all_ifit_devices(timeout: float = 10.0) -> list[IFitDevice]:
                         name=device.name,
                         manufacturer_data=payload,
                         code=_extract_displayed_code(payload),
+                        manufacturer_company_id=company_id,
                     )
                 )
                 break

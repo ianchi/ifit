@@ -15,6 +15,7 @@
   "python.terminal.activateEnvInCurrentTerminal": true,
   "chat.tools.terminal.autoApprove": {
     "./scripts/lint.sh": true,
-    "./scripts/format.sh": true
+    "./scripts/format.sh": true,
+    "ruff": true
   }
 }

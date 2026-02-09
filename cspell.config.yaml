@@ -22,10 +22,12 @@ words:
   - asyncio
   - bitfield
   - bitfields
+  - bluez
   - bytearray
   - cli
   - commitizen
   - conftest
+  - corebluetooth
   - coro
   - dataclass
   - datetimez
@@ -64,6 +66,7 @@ words:
   - tseries
   - venv
   - virtualenvs
+  - winrt
   - zwifit
   - zwift
 overrides:
