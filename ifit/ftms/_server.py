@@ -626,7 +626,7 @@ class FtmsBleRelay:
         mode = values.get("Mode")
 
         LOGGER.debug(
-            "Treadmill data: speed=%.2f kph, incline=%.1f%%, distance=%.2f km, hr=%s, mode=%s",
+            "Treadmill data: speed=%.2f kph, incline=%.1f%%, distance=%.2f m, hr=%s, mode=%s",
             current_kph,
             current_incline,
             distance,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from enum import IntEnum
 from struct import pack
 
@@ -204,11 +205,15 @@ def encode_treadmill_data(
 
     if incline_percent is not None:
         flags |= TREADMILL_FLAG_INCLINE
-        incline_raw = _s16_or_unknown(incline_percent, 10.0, 0x7FFF)
-        # Per FTMS spec, when bit 3 is set, BOTH inclination and ramp angle must be present
-        payload += pack("<h", incline_raw)
-        # Ramp angle setting - for simple treadmills, same as inclination
-        payload += pack("<h", incline_raw)
+        # Per FTMS spec, when bit 3 is set, BOTH inclination and ramp angle must be present:
+        # Field 5: Inclination in units of 0.1% (percentage)
+        incline_percent_raw = _s16_or_unknown(incline_percent, 10.0, 0x7FFF)
+        payload += pack("<h", incline_percent_raw)
+        # Field 6: Ramp Angle Setting in units of 0.1 degrees
+        # Convert from percentage to degrees: degrees = atan(percent / 100) * 180 / π
+        incline_degrees = math.degrees(math.atan(incline_percent / 100.0))
+        incline_degrees_raw = _s16_or_unknown(incline_degrees, 10.0, 0x7FFF)
+        payload += pack("<h", incline_degrees_raw)
 
     # Note: Elevation Gain (bit 4), Pace fields (bits 5-6), Energy (bit 7) not implemented
 
@@ -270,7 +275,9 @@ def encode_status_target_incline_changed(incline_percent: float) -> bytes:
         incline_percent: New target incline in percent
 
     Returns:
-        Status notification: opcode (0x06) + SINT16 value (% * 10)
+        Status notification: opcode (0x06) + SINT16 value (degrees * 10)
     """
-    incline_raw = max(-32768, min(round(incline_percent * 10), 32767))
+    # Convert from percentage to degrees: degrees = atan(percent / 100) * 180 / π
+    incline_degrees = math.degrees(math.atan(incline_percent / 100.0))
+    incline_raw = max(-32768, min(round(incline_degrees * 10), 32767))
     return pack("<Bh", FitnessMachineStatus.TARGET_INCLINE_CHANGED, incline_raw)
